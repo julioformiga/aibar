@@ -36,12 +36,13 @@ pub enum AppMsg {
 #[derive(Debug)]
 pub enum PollCommand {
     ForceRefresh,
+    Pause,
+    Resume,
 }
 
 pub struct SourceSlot {
     pub id: String,
     pub state: SourceState,
-    #[allow(dead_code)]
     pub poll_tx: mpsc::Sender<PollCommand>,
     pub last_poll_at: Option<std::time::Instant>,
     pub next_poll_at: Option<std::time::Instant>,
@@ -129,20 +130,36 @@ impl AppState {
     }
 
     pub fn switch_tab(&mut self, idx: usize) {
-        if idx < self.tabs.len() {
-            self.active_tab = idx;
+        if idx < self.tabs.len() && idx != self.active_tab {
+            self.set_active_tab(idx);
         }
     }
 
     pub fn next_tab(&mut self) {
         if !self.tabs.is_empty() {
-            self.active_tab = (self.active_tab + 1) % self.tabs.len();
+            let next = (self.active_tab + 1) % self.tabs.len();
+            self.switch_tab(next);
         }
     }
 
     pub fn prev_tab(&mut self) {
         if !self.tabs.is_empty() {
-            self.active_tab = (self.active_tab + self.tabs.len() - 1) % self.tabs.len();
+            let prev = (self.active_tab + self.tabs.len() - 1) % self.tabs.len();
+            self.switch_tab(prev);
+        }
+    }
+
+    fn set_active_tab(&mut self, idx: usize) {
+        if let Some(tab) = self.tabs.get(self.active_tab) {
+            for slot in &tab.sources {
+                let _ = slot.poll_tx.try_send(PollCommand::Pause);
+            }
+        }
+        self.active_tab = idx;
+        if let Some(tab) = self.tabs.get(idx) {
+            for slot in &tab.sources {
+                let _ = slot.poll_tx.try_send(PollCommand::Resume);
+            }
         }
     }
 
@@ -213,24 +230,28 @@ mod tests {
     use crate::model::{Provider, ProviderState, SourceState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+    fn make_slot(provider: Provider, id: &str, poll_tx: mpsc::Sender<PollCommand>) -> SourceSlot {
+        SourceSlot {
+            id: id.to_string(),
+            state: SourceState::Quota(ProviderState {
+                provider,
+                label: provider.label().to_string(),
+                windows: vec![],
+                last_updated: None,
+                last_error: None,
+            }),
+            poll_tx,
+            last_poll_at: None,
+            next_poll_at: None,
+        }
+    }
+
     fn make_tab(provider: Provider, source_ids: &[&str]) -> Tab {
         let sources = source_ids
             .iter()
             .map(|id| {
                 let (tx, _rx) = mpsc::channel(4);
-                SourceSlot {
-                    id: (*id).to_string(),
-                    state: SourceState::Quota(ProviderState {
-                        provider,
-                        label: provider.label().to_string(),
-                        windows: vec![],
-                        last_updated: None,
-                        last_error: None,
-                    }),
-                    poll_tx: tx,
-                    last_poll_at: None,
-                    next_poll_at: None,
-                }
+                make_slot(provider, id, tx)
             })
             .collect();
         Tab {
@@ -392,5 +413,47 @@ mod tests {
         let slot = &app.tabs[0].sources[0];
         assert!(slot.last_poll_at.is_some());
         assert_eq!(slot.next_poll_at, Some(next));
+    }
+
+    #[tokio::test]
+    async fn switching_tabs_pauses_old_and_resumes_new_sources() {
+        let (tx0, mut rx0) = mpsc::channel(4);
+        let (tx1, mut rx1) = mpsc::channel(4);
+        let mut app = AppState::new(vec![
+            Tab {
+                provider: Provider::Claude,
+                sources: vec![make_slot(Provider::Claude, "oauth", tx0)],
+                active: 0,
+            },
+            Tab {
+                provider: Provider::Zai,
+                sources: vec![make_slot(Provider::Zai, "default", tx1)],
+                active: 0,
+            },
+        ]);
+
+        app.switch_tab(1);
+        assert!(matches!(rx0.recv().await, Some(PollCommand::Pause)));
+        assert!(matches!(rx1.recv().await, Some(PollCommand::Resume)));
+
+        app.switch_tab(0);
+        assert!(matches!(rx1.recv().await, Some(PollCommand::Pause)));
+        assert!(matches!(rx0.recv().await, Some(PollCommand::Resume)));
+    }
+
+    #[tokio::test]
+    async fn switching_to_current_tab_sends_no_commands() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut app = AppState::new(vec![Tab {
+            provider: Provider::Claude,
+            sources: vec![make_slot(Provider::Claude, "oauth", tx)],
+            active: 0,
+        }]);
+
+        app.switch_tab(0);
+        app.next_tab();
+        app.prev_tab();
+        assert!(rx.try_recv().is_err());
+        assert_eq!(app.active_tab, 0);
     }
 }

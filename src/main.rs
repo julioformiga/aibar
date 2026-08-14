@@ -59,9 +59,9 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
 
     let (app_tx, mut app_rx) = mpsc::channel::<AppMsg>(64);
 
-    let tabs = build_tabs(detected, &cached, app_tx.clone());
+    let (tabs, initial_tab) = build_tabs(detected, &cached, app_tx.clone());
     let mut app = AppState::new(tabs);
-    app.switch_tab(cached.active_tab.min(app.tabs.len().saturating_sub(1)));
+    app.active_tab = initial_tab;
 
     let mut events = EventStream::new();
     let mut redraw_tick = tokio::time::interval(Duration::from_secs(1));
@@ -105,7 +105,7 @@ fn build_tabs(
     agents: Vec<Box<dyn Agent>>,
     cached: &CachedState,
     app_tx: mpsc::Sender<AppMsg>,
-) -> Vec<Tab> {
+) -> (Vec<Tab>, usize) {
     let mut tabs_map: Vec<(Provider, Vec<Box<dyn Agent>>)> = Vec::new();
     for agent in agents {
         let provider = agent.provider();
@@ -116,8 +116,11 @@ fn build_tabs(
         }
     }
 
+    let active_tab_idx = cached.active_tab.min(tabs_map.len().saturating_sub(1));
+
     let mut tabs = Vec::new();
-    for (provider, group) in tabs_map {
+    for (i, (provider, group)) in tabs_map.into_iter().enumerate() {
+        let start_paused = i != active_tab_idx;
         let active = cached
             .active_sources
             .get(provider.label())
@@ -134,7 +137,7 @@ fn build_tabs(
             let state = cached_state.unwrap_or_else(|| agent.initial_state());
 
             let (cmd_tx, cmd_rx) = mpsc::channel::<PollCommand>(8);
-            tokio::spawn(run_poller(agent, app_tx.clone(), cmd_rx));
+            tokio::spawn(run_poller(agent, app_tx.clone(), cmd_rx, start_paused));
 
             sources.push(SourceSlot {
                 id: source_id,
@@ -151,7 +154,7 @@ fn build_tabs(
             active,
         });
     }
-    tabs
+    (tabs, active_tab_idx)
 }
 
 fn save_cache(cache: &Cache, app: &AppState) {
@@ -181,12 +184,22 @@ async fn run_poller(
     agent: Box<dyn Agent>,
     app_tx: mpsc::Sender<AppMsg>,
     mut cmd_rx: mpsc::Receiver<PollCommand>,
+    start_paused: bool,
 ) {
     let provider = agent.provider();
     let source_id = agent.source_id().to_string();
     let mut interval = poll_interval();
+    let mut paused = start_paused;
 
     loop {
+        while paused {
+            match cmd_rx.recv().await {
+                Some(PollCommand::Resume) | Some(PollCommand::ForceRefresh) => paused = false,
+                Some(PollCommand::Pause) => {}
+                None => return,
+            }
+        }
+
         let result = tokio::time::timeout(http_timeout(), agent.fetch()).await;
         let mut wait_for_user = false;
         match result {
@@ -244,18 +257,42 @@ async fn run_poller(
             // A login-required error cannot resolve on its own; retrying on
             // a timer would re-spawn agy and reopen the Google login screen.
             // Wait for an explicit refresh (R) instead.
-            match cmd_rx.recv().await {
-                Some(PollCommand::ForceRefresh) => continue,
-                None => return,
+            loop {
+                match cmd_rx.recv().await {
+                    Some(PollCommand::ForceRefresh) => break,
+                    Some(PollCommand::Resume) => paused = false,
+                    Some(PollCommand::Pause) => paused = true,
+                    None => return,
+                }
             }
+            continue;
         }
 
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {}
-            cmd = cmd_rx.recv() => {
-                if matches!(cmd, Some(PollCommand::ForceRefresh)) {
-                    continue;
+        let deadline = tokio::time::Instant::from_std(next_at);
+        let sleep = tokio::time::sleep_until(deadline);
+        tokio::pin!(sleep);
+
+        loop {
+            if paused {
+                match cmd_rx.recv().await {
+                    Some(PollCommand::Resume) => paused = false,
+                    Some(PollCommand::ForceRefresh) => {
+                        paused = false;
+                        break;
+                    }
+                    Some(PollCommand::Pause) => {}
+                    None => return,
                 }
+                continue;
+            }
+            tokio::select! {
+                _ = &mut sleep => break,
+                cmd = cmd_rx.recv() => match cmd {
+                    Some(PollCommand::ForceRefresh) => break,
+                    Some(PollCommand::Pause) => paused = true,
+                    Some(PollCommand::Resume) => {}
+                    None => return,
+                },
             }
         }
     }
