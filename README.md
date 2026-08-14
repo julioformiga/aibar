@@ -76,6 +76,23 @@ Fallbacks without an env var:
 
 Logs are written to `~/.cache/aibar/aibar.log`.
 
+## Troubleshooting
+
+### Gemini asks for Google login
+
+The Gemini quota comes from the local Antigravity (`agy`) language server,
+which requires Google authentication — there is no way to fetch it
+unauthenticated. If the quota poll happens before `agy` has valid
+credentials, aibar detects it, stops auto-retrying (so the Google login
+screen is not reopened on every poll), and shows:
+
+```
+agy login required: run `agy` in another terminal to log in, then press R to retry
+```
+
+Run `agy` once in another terminal to authenticate silently (cached
+credentials), then press `r` in aibar to retry.
+
 ## Development
 
 ```sh

@@ -499,6 +499,16 @@ pub trait Agent: Send + Sync {
      no `PATH`, executa `agy --dangerously-skip-permissions --print ok`,
      aguarda até 15s por uma nova porta aparecer nos logs, e tenta novamente.
      O processo agy é morto após a coleta.
+  4. **Login obrigatório:** Se o agy auto-iniciado não conseguir autenticar
+     silenciosamente (marcadores nos logs: `"Print mode: silent auth failed"`
+     ou `"Print mode: triggering interactive OAuth"`, sem
+     `"authenticated successfully"`), o aibar mata o processo antes que a
+     tela de login do Google abra e retorna o erro
+     `"agy login required: run 'agy' in another terminal to log in, then press R to retry"`.
+     O poller não tenta novamente automaticamente nesse caso (evita reabrir
+     o login a cada ciclo); apenas um refresh manual (`R`) retenta. A
+     autenticação não pode ser evitada: o endpoint de quota exige conta
+     Google.
 
   - **Endpoint gRPC:**
     `http://127.0.0.1:{port}/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`

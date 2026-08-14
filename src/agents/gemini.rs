@@ -7,10 +7,34 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Prefix of the error shown when the auto-spawned `agy` requires Google
+/// login. The poller matches on it to stop auto-retrying until the user
+/// forces a refresh.
+pub const LOGIN_REQUIRED_ERROR: &str = "agy login required";
+
+/// Returns true when an agent error means the Gemini quota cannot be
+/// fetched until the user runs `agy` interactively.
+pub fn is_login_required(error: &str) -> bool {
+    error.starts_with(LOGIN_REQUIRED_ERROR)
+}
+
 pub struct GeminiAgent {
     log_dir: Option<PathBuf>,
     client: reqwest::Client,
 }
+
+/// Sentinel error: the auto-spawned `agy` could not authenticate silently
+/// and fell back to interactive OAuth, which cannot complete inside aibar.
+#[derive(Debug)]
+struct LoginRequired;
+
+impl std::fmt::Display for LoginRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "agy requires Google login")
+    }
+}
+
+impl std::error::Error for LoginRequired {}
 
 /// Kills the spawned `agy` process on drop, including when this future is
 /// cancelled mid-await by the outer HTTP timeout in `run_poller` — plain
@@ -132,6 +156,9 @@ impl GeminiAgent {
 
         match self.spawn_agy_and_fetch().await {
             Ok(resp) => self.parse_response(resp),
+            Err(e) if e.downcast_ref::<LoginRequired>().is_some() => Err(anyhow::anyhow!(
+                "{LOGIN_REQUIRED_ERROR}: run `agy` in another terminal to log in, then press R to retry"
+            )),
             Err(e) => Err(anyhow::anyhow!(
                 "Antigravity (agy) server not found and auto-start failed: {e}"
             )),
@@ -178,6 +205,11 @@ impl GeminiAgent {
         let _ = guard.0.kill().await;
         let _ = guard.0.wait().await;
 
+        if !matches!(result, Ok(Ok(_))) && self.new_logs_show_login_prompt(&known_logs) {
+            tracing::info!("agy requires Google login (interactive OAuth)");
+            return Err(anyhow::Error::new(LoginRequired));
+        }
+
         match result {
             Ok(Ok(resp)) => Ok(resp),
             Ok(Err(e)) => Err(e),
@@ -186,7 +218,9 @@ impl GeminiAgent {
     }
 
     /// Polls for a new log file (not in `known`), extracts the port, and
-    /// retries the quota endpoint until it responds.
+    /// retries the quota endpoint until it responds. Bails out early with
+    /// [`LoginRequired`] when the new logs show agy fell back to interactive
+    /// OAuth, so the login browser never gets a chance to open.
     async fn wait_for_new_port_and_fetch(&self, known: &[String]) -> anyhow::Result<Value> {
         let mut tried_ports: Vec<u16> = Vec::new();
         loop {
@@ -217,7 +251,18 @@ impl GeminiAgent {
                     return Ok(resp);
                 }
             }
+
+            if new_logs_show_login_prompt(self.log_dir.as_deref(), known) {
+                tracing::info!("agy fell back to interactive OAuth login");
+                return Err(anyhow::Error::new(LoginRequired));
+            }
         }
+    }
+
+    /// Returns true when any log file created after the `known` snapshot
+    /// shows that agy needs an interactive Google login.
+    fn new_logs_show_login_prompt(&self, known: &[String]) -> bool {
+        new_logs_show_login_prompt(self.log_dir.as_deref(), known)
     }
 
     /// Returns the file paths of all current log files (as strings),
@@ -330,6 +375,40 @@ fn quota_url(port: u16) -> String {
     )
 }
 
+/// Returns true when any log file created after the `known` snapshot shows
+/// that agy needs an interactive Google login.
+fn new_logs_show_login_prompt(log_dir: Option<&std::path::Path>, known: &[String]) -> bool {
+    let Some(log_dir) = log_dir else {
+        return false;
+    };
+    for path in list_cli_logs_sorted_by_mtime(log_dir) {
+        let path_str = path.to_string_lossy().to_string();
+        if known.contains(&path_str) {
+            continue;
+        }
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if login_prompt_in_content(&content) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Detects, from an agy log file, that the CLI could not authenticate
+/// silently and needs an interactive Google login (which cannot happen
+/// inside aibar). Auth markers come from agy's print-mode logger.
+fn login_prompt_in_content(content: &str) -> bool {
+    if content.contains("authenticated successfully")
+        || content.contains("Print mode: authenticated as")
+    {
+        return false;
+    }
+    content.contains("Print mode: triggering interactive OAuth")
+        || (content.contains("Print mode: silent auth failed")
+            && !content.contains("Print mode: silent auth succeeded"))
+}
+
 fn which_agy() -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths).find_map(|dir| {
@@ -423,6 +502,75 @@ mod tests {
     #[test]
     fn extract_ss_port_returns_none_without_marker() {
         assert_eq!(extract_ss_port("no address here"), None);
+    }
+
+    #[test]
+    fn login_prompt_detects_interactive_oauth() {
+        let content = "I0814 printmode.go:441] Print mode: silent auth failed\n\
+                       I0814 printmode.go:443] Print mode: triggering interactive OAuth\n";
+        assert!(login_prompt_in_content(content));
+    }
+
+    #[test]
+    fn login_prompt_detects_silent_auth_failure() {
+        let content = "I0814 printmode.go:440] Print mode: not authenticated, trying silent auth\n\
+                       I0814 printmode.go:441] Print mode: silent auth failed\n";
+        assert!(login_prompt_in_content(content));
+    }
+
+    #[test]
+    fn login_prompt_ignores_successful_auth() {
+        let content = "I0814 printmode.go:440] Print mode: not authenticated, trying silent auth\n\
+                       I0814 server_oauth.go:194] OAuth: authenticated successfully as user@example.com\n\
+                       I0814 printmode.go:442] Print mode: silent auth succeeded\n";
+        assert!(!login_prompt_in_content(content));
+    }
+
+    #[test]
+    fn login_prompt_ignores_regular_logs() {
+        let content = "You are not logged into Antigravity.\n\
+                       Language server listening on random port at 43755 for HTTPS (gRPC)\n";
+        assert!(!login_prompt_in_content(content));
+    }
+
+    #[test]
+    fn is_login_required_matches_error_prefix() {
+        assert!(is_login_required(
+            "agy login required: run `agy` in another terminal to log in, then press R to retry"
+        ));
+        assert!(!is_login_required(
+            "Antigravity (agy) server not found and auto-start failed: timed out"
+        ));
+        assert!(!is_login_required("request timed out"));
+    }
+
+    #[test]
+    fn new_logs_show_login_prompt_only_checks_new_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "aibar-test-login-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("cli-old.log");
+        let new = dir.join("cli-new.log");
+        std::fs::write(&old, "authenticated successfully\n").unwrap();
+        std::fs::write(&new, "Print mode: triggering interactive OAuth\n").unwrap();
+
+        let old_known = vec![old.to_string_lossy().to_string()];
+        assert!(new_logs_show_login_prompt(Some(&dir), &old_known));
+
+        let all_known = vec![
+            old.to_string_lossy().to_string(),
+            new.to_string_lossy().to_string(),
+        ];
+        assert!(!new_logs_show_login_prompt(Some(&dir), &all_known));
+        assert!(!new_logs_show_login_prompt(None, &old_known));
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

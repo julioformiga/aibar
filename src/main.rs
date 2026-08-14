@@ -188,6 +188,7 @@ async fn run_poller(
 
     loop {
         let result = tokio::time::timeout(http_timeout(), agent.fetch()).await;
+        let mut wait_for_user = false;
         match result {
             Ok(Ok(state)) => {
                 let _ = app_tx
@@ -200,14 +201,18 @@ async fn run_poller(
                 interval = poll_interval();
             }
             Ok(Err(e)) => {
+                let error = e.to_string();
+                wait_for_user = agents::gemini::is_login_required(&error);
                 let _ = app_tx
                     .send(AppMsg::Error {
                         provider,
                         source_id: source_id.clone(),
-                        error: e.to_string(),
+                        error,
                     })
                     .await;
-                interval = std::cmp::min(interval * 2, max_backoff());
+                if !wait_for_user {
+                    interval = std::cmp::min(interval * 2, max_backoff());
+                }
             }
             Err(_) => {
                 let _ = app_tx
@@ -221,7 +226,12 @@ async fn run_poller(
             }
         }
 
-        let next_at = std::time::Instant::now() + interval;
+        let next_at = std::time::Instant::now()
+            + if wait_for_user {
+                Duration::from_secs(365 * 24 * 3600)
+            } else {
+                interval
+            };
         let _ = app_tx
             .send(AppMsg::Scheduled {
                 provider,
@@ -229,6 +239,16 @@ async fn run_poller(
                 next_at,
             })
             .await;
+
+        if wait_for_user {
+            // A login-required error cannot resolve on its own; retrying on
+            // a timer would re-spawn agy and reopen the Google login screen.
+            // Wait for an explicit refresh (R) instead.
+            match cmd_rx.recv().await {
+                Some(PollCommand::ForceRefresh) => continue,
+                None => return,
+            }
+        }
 
         tokio::select! {
             _ = tokio::time::sleep(interval) => {}
