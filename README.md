@@ -6,12 +6,7 @@ A minimal terminal UI (TUI) that monitors API rate limits for **Claude**,
 Designed to run in a side pane (e.g. a `tmux` split) and give instant visual
 feedback on how close each account is to its limit.
 
-```
-┌ AIBar │ Claude (Pro) │ Z.ai │ Gemini ────────────── ━━━━━━━━━━━┄┄┄┄┄┄┄┄┄┐
-│       0h30m/5h  [█████████████░░░░░░░░░░░░░░░░░░░░░░░░░]  32% 320/1k │
-│       6d16h/7d  [██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   4%  40/1k │
-└──────────────────────────────────── Enter Source  Refresh  Quit ────┘
-```
+<img width="857" height="93" alt="image" src="https://github.com/user-attachments/assets/54f36b40-38a0-4085-ae99-1a43e40d74ca" />
 
 ## Features
 
