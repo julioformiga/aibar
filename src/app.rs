@@ -1,0 +1,396 @@
+use crate::config::cooldown;
+use crate::model::{Provider, SourceState};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use tokio::sync::mpsc;
+
+pub enum Action {
+    Quit,
+}
+
+pub enum RefreshResult {
+    Triggered,
+    #[allow(dead_code)]
+    CooldownActive {
+        secs_remaining: u32,
+    },
+}
+
+pub enum AppMsg {
+    Update {
+        provider: Provider,
+        source_id: String,
+        state: SourceState,
+    },
+    Error {
+        provider: Provider,
+        source_id: String,
+        error: String,
+    },
+    Scheduled {
+        provider: Provider,
+        source_id: String,
+        next_at: std::time::Instant,
+    },
+}
+
+#[derive(Debug)]
+pub enum PollCommand {
+    ForceRefresh,
+}
+
+pub struct SourceSlot {
+    pub id: String,
+    pub state: SourceState,
+    #[allow(dead_code)]
+    pub poll_tx: mpsc::Sender<PollCommand>,
+    pub last_poll_at: Option<std::time::Instant>,
+    pub next_poll_at: Option<std::time::Instant>,
+}
+
+pub struct Tab {
+    pub provider: Provider,
+    pub sources: Vec<SourceSlot>,
+    pub active: usize,
+}
+
+impl Tab {
+    pub fn cycle_source(&mut self) {
+        if self.sources.len() > 1 {
+            self.active = (self.active + 1) % self.sources.len();
+        }
+    }
+
+    pub fn active_state(&self) -> Option<&SourceState> {
+        self.sources.get(self.active).map(|s| &s.state)
+    }
+}
+
+pub struct AppState {
+    pub tabs: Vec<Tab>,
+    pub active_tab: usize,
+    pub last_refresh: Option<std::time::Instant>,
+    pub status_message: Option<String>,
+}
+
+impl AppState {
+    pub fn new(tabs: Vec<Tab>) -> Self {
+        Self {
+            tabs,
+            active_tab: 0,
+            last_refresh: None,
+            status_message: None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    #[allow(dead_code)]
+    pub fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active_tab)
+    }
+
+    pub fn active_state(&self) -> Option<&SourceState> {
+        self.tabs.get(self.active_tab)?.active_state()
+    }
+
+    pub fn handle_input(&mut self, key: KeyEvent) -> Option<Action> {
+        match key.code {
+            KeyCode::Char('q') => Some(Action::Quit),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                Some(Action::Quit)
+            }
+            KeyCode::Char('r') => {
+                self.request_refresh();
+                None
+            }
+            KeyCode::Enter => {
+                if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+                    tab.cycle_source();
+                }
+                self.status_message = None;
+                None
+            }
+            KeyCode::Tab | KeyCode::Right => {
+                self.next_tab();
+                None
+            }
+            KeyCode::BackTab | KeyCode::Left => {
+                self.prev_tab();
+                None
+            }
+            KeyCode::Char(c @ '1'..='9') => {
+                self.switch_tab((c as usize) - ('1' as usize));
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn switch_tab(&mut self, idx: usize) {
+        if idx < self.tabs.len() {
+            self.active_tab = idx;
+        }
+    }
+
+    pub fn next_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active_tab = (self.active_tab + 1) % self.tabs.len();
+        }
+    }
+
+    pub fn prev_tab(&mut self) {
+        if !self.tabs.is_empty() {
+            self.active_tab = (self.active_tab + self.tabs.len() - 1) % self.tabs.len();
+        }
+    }
+
+    pub fn request_refresh(&mut self) -> RefreshResult {
+        if let Some(last) = self.last_refresh {
+            let elapsed = last.elapsed();
+            if elapsed < cooldown() {
+                let remain = (cooldown() - elapsed).as_secs().max(1) as u32;
+                self.status_message = Some(format!("Wait {}s to refresh", remain));
+                return RefreshResult::CooldownActive {
+                    secs_remaining: remain,
+                };
+            }
+        }
+        if let Some(tab) = self.tabs.get(self.active_tab) {
+            if let Some(slot) = tab.sources.get(tab.active) {
+                let _ = slot.poll_tx.try_send(PollCommand::ForceRefresh);
+                self.last_refresh = Some(std::time::Instant::now());
+                self.status_message = None;
+                return RefreshResult::Triggered;
+            }
+        }
+        self.status_message = Some("No source to refresh".into());
+        RefreshResult::Triggered
+    }
+
+    pub fn apply_update(&mut self, provider: Provider, source_id: &str, state: SourceState) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.provider == provider) {
+            if let Some(slot) = tab.sources.iter_mut().find(|s| s.id == source_id) {
+                slot.state = state;
+            }
+        }
+        self.status_message = None;
+    }
+
+    pub fn apply_error(&mut self, provider: Provider, source_id: &str, error: String) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.provider == provider) {
+            if let Some(slot) = tab.sources.iter_mut().find(|s| s.id == source_id) {
+                slot.state.set_error(error);
+            }
+        }
+    }
+
+    pub fn apply_scheduled(
+        &mut self,
+        provider: Provider,
+        source_id: &str,
+        next_at: std::time::Instant,
+    ) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.provider == provider) {
+            if let Some(slot) = tab.sources.iter_mut().find(|s| s.id == source_id) {
+                slot.last_poll_at = Some(std::time::Instant::now());
+                slot.next_poll_at = Some(next_at);
+            }
+        }
+    }
+
+    pub fn active_poll_timing(&self) -> Option<(std::time::Instant, std::time::Instant)> {
+        let tab = self.tabs.get(self.active_tab)?;
+        let slot = tab.sources.get(tab.active)?;
+        Some((slot.last_poll_at?, slot.next_poll_at?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Provider, ProviderState, SourceState};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_tab(provider: Provider, source_ids: &[&str]) -> Tab {
+        let sources = source_ids
+            .iter()
+            .map(|id| {
+                let (tx, _rx) = mpsc::channel(4);
+                SourceSlot {
+                    id: (*id).to_string(),
+                    state: SourceState::Quota(ProviderState {
+                        provider,
+                        label: provider.label().to_string(),
+                        windows: vec![],
+                        last_updated: None,
+                        last_error: None,
+                    }),
+                    poll_tx: tx,
+                    last_poll_at: None,
+                    next_poll_at: None,
+                }
+            })
+            .collect();
+        Tab {
+            provider,
+            sources,
+            active: 0,
+        }
+    }
+
+    #[test]
+    fn cycle_source_wraps_with_multiple_sources() {
+        let mut tab = make_tab(Provider::Claude, &["oauth", "api-key"]);
+        assert_eq!(tab.active, 0);
+        tab.cycle_source();
+        assert_eq!(tab.active, 1);
+        tab.cycle_source();
+        assert_eq!(tab.active, 0);
+    }
+
+    #[test]
+    fn cycle_source_noop_with_single_source() {
+        let mut tab = make_tab(Provider::Zai, &["default"]);
+        tab.cycle_source();
+        assert_eq!(tab.active, 0);
+    }
+
+    #[test]
+    fn active_state_reflects_active_index() {
+        let mut tab = make_tab(Provider::Claude, &["oauth", "api-key"]);
+        tab.active = 1;
+        assert_eq!(tab.active_state().unwrap().label(), "Claude");
+    }
+
+    #[test]
+    fn tab_navigation_wraps() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+            make_tab(Provider::Gemini, &["default"]),
+        ]);
+        assert_eq!(app.active_tab, 0);
+        app.next_tab();
+        assert_eq!(app.active_tab, 1);
+        app.prev_tab();
+        assert_eq!(app.active_tab, 0);
+        app.prev_tab();
+        assert_eq!(app.active_tab, 2);
+        app.switch_tab(1);
+        assert_eq!(app.active_tab, 1);
+        app.switch_tab(99);
+        assert_eq!(app.active_tab, 1);
+    }
+
+    #[test]
+    fn empty_app_state_navigation_is_noop() {
+        let mut app = AppState::new(vec![]);
+        assert!(app.is_empty());
+        app.next_tab();
+        app.prev_tab();
+        assert_eq!(app.active_tab, 0);
+    }
+
+    #[test]
+    fn handle_input_quit_keys() {
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth"])]);
+        assert!(matches!(
+            app.handle_input(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            Some(Action::Quit)
+        ));
+        assert!(matches!(
+            app.handle_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        ));
+        assert!(app
+            .handle_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
+            .is_none());
+    }
+
+    #[test]
+    fn handle_input_tab_switching() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+        ]);
+        app.handle_input(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, 1);
+        app.handle_input(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(app.active_tab, 0);
+        app.handle_input(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.active_tab, 1);
+    }
+
+    #[test]
+    fn handle_input_enter_cycles_source_and_clears_status() {
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth", "api-key"])]);
+        app.status_message = Some("stale".into());
+        app.handle_input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.tabs[0].active, 1);
+        assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn request_refresh_triggers_then_respects_cooldown() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::set_var("AIBAR_COOLDOWN_SECS", "3600");
+
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth"])]);
+        assert!(matches!(app.request_refresh(), RefreshResult::Triggered));
+        assert!(app.last_refresh.is_some());
+
+        match app.request_refresh() {
+            RefreshResult::CooldownActive { secs_remaining } => {
+                assert!(secs_remaining > 0);
+            }
+            RefreshResult::Triggered => panic!("expected cooldown to be active"),
+        }
+        assert!(app.status_message.as_deref().unwrap().starts_with("Wait"));
+
+        std::env::remove_var("AIBAR_COOLDOWN_SECS");
+    }
+
+    #[test]
+    fn request_refresh_with_no_tabs_sets_status_message() {
+        let mut app = AppState::new(vec![]);
+        app.request_refresh();
+        assert_eq!(app.status_message.as_deref(), Some("No source to refresh"));
+    }
+
+    #[test]
+    fn apply_update_sets_matching_slot_state() {
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth", "api-key"])]);
+        let new_state = SourceState::Quota(ProviderState {
+            provider: Provider::Claude,
+            label: "Claude (Pro)".into(),
+            windows: vec![],
+            last_updated: None,
+            last_error: None,
+        });
+        app.apply_update(Provider::Claude, "api-key", new_state);
+        assert_eq!(app.tabs[0].sources[1].state.label(), "Claude (Pro)");
+        assert_eq!(app.tabs[0].sources[0].state.label(), "Claude");
+    }
+
+    #[test]
+    fn apply_error_sets_error_on_matching_slot() {
+        let mut app = AppState::new(vec![make_tab(Provider::Zai, &["default"])]);
+        app.apply_error(Provider::Zai, "default", "network down".into());
+        assert_eq!(
+            app.tabs[0].sources[0].state.last_error(),
+            Some("network down")
+        );
+    }
+
+    #[test]
+    fn apply_scheduled_sets_poll_timing() {
+        let mut app = AppState::new(vec![make_tab(Provider::Gemini, &["default"])]);
+        let next = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        app.apply_scheduled(Provider::Gemini, "default", next);
+        let slot = &app.tabs[0].sources[0];
+        assert!(slot.last_poll_at.is_some());
+        assert_eq!(slot.next_poll_at, Some(next));
+    }
+}
