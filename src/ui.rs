@@ -24,9 +24,16 @@ pub fn draw(f: &mut Frame, app: &AppState) {
         .borders(Borders::ALL)
         .border_type(palette.border)
         .title(title);
-    if let Some(c) = palette.border_color {
-        block = block.border_style(Style::default().fg(c));
+    if let Some(c) = palette.bg {
+        block = block.style(Style::default().bg(c));
     }
+    let border_style = match (palette.border_color, palette.bg) {
+        (Some(fg), Some(bg)) => Style::default().fg(fg).bg(bg),
+        (Some(fg), None) => Style::default().fg(fg),
+        (None, Some(bg)) => Style::default().bg(bg),
+        (None, None) => Style::default(),
+    };
+    block = block.border_style(border_style);
 
     if !app.is_empty() {
         if let Some(t) = build_timer_line(app, &palette) {
@@ -647,11 +654,26 @@ mod tests {
             assert!(frame.contains("95%"), "{theme:?}: missing second bar");
             assert!(frame.contains("Theme"), "{theme:?}: missing hint");
             match theme {
-                Theme::Crush => assert!(
-                    frame.contains('\u{256d}'),
-                    "crush should use rounded corners"
-                ),
-                _ => assert!(frame.contains('\u{250c}')),
+                Theme::Crush => {
+                    assert!(
+                        frame.contains('\u{256d}'),
+                        "crush should use rounded corners"
+                    );
+                    assert_eq!(buf[(0u16, 0u16)].bg, crate::theme::test_bg());
+                    assert_eq!(
+                        buf[(0u16, 9u16)].bg,
+                        crate::theme::test_bg(),
+                        "bottom border row also painted"
+                    );
+                }
+                _ => {
+                    assert!(frame.contains('\u{250c}'));
+                    assert_eq!(
+                        buf[(50u16, 5u16)].bg,
+                        ratatui::style::Color::Reset,
+                        "other themes keep terminal bg"
+                    );
+                }
             }
         }
     }

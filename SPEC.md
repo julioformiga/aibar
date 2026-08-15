@@ -325,10 +325,12 @@ brevemente na linha de status (`theme: crush`).
 | Tema       | Identidade visual                                                                 |
 |------------|-----------------------------------------------------------------------------------|
 | `default`  | Visual clássico do aibar: bordas retas, barras `[█▒]`, cores por faixa (verde/amarelo/vermelho), aba ativa amarela sublinhada |
-| `crush`    | Paleta Charmtone Pantera (do agente Crush): bordas arredondadas em lilás Hazy (`#8B75FF`, como o box de input do Crush), título branco brilhante (Salt `#F7F6FB`), aba ativa magenta Dolly (`#FF60FF`), barras `(━┄)` com gradiente Hazy→Dolly (`#8B75FF`→`#FF60FF`), severidade menta/mostarda/rosa (`#00FFB2`/`#F5EF34`/`#EB4268`), texto sutil em Squid (`#858392`), timer em gradiente lilás→magenta |
+| `crush`    | Paleta Charmtone Pantera (do agente Crush): bordas arredondadas em lilás Hazy (`#8B75FF`, como o box de input do Crush) sobre fundo escuro `#1F1C23` (extraído da screenshot do Crush, pintado inclusive sob a moldura), título branco brilhante (Salt `#F7F6FB`) com separadores de aba em Iron (`#4D4C57`), aba ativa magenta Dolly (`#FF60FF`), barras `(━┄)` com gradiente Hazy→Dolly (`#8B75FF`→`#FF60FF`), severidade menta/mostarda/rosa (`#00FFB2`/`#F5EF34`/`#EB4268`), texto sutil em Squid (`#858392`), timer em gradiente lilás→magenta |
 | `btop`     | Tema default do btop: borda esverdeada (`#556D59`), aba ativa com fundo vermelho selecionado (`#6A2F2F`), barras sem colchetes com gradiente CPU (`#77CA9B`→`#CBC06C`→`#DC4C4C`) sobre trilho cinza sólido, timer amarelo (`#CBC06C`) |
 
-A paleta define: tipo/cor de borda, estilo do título e das abas, separadores,
+A paleta define: background sólido opcional (o tema `crush` pinta o painel
+inteiro com `#1F1C23`, inclusive sob a moldura; os demais usam o fundo do
+terminal), tipo/cor de borda, estilo do título e das abas, separadores,
 caracteres de barra (cheio/vazio, aberturas), cor de trilho vazio, função de
 cor por posição da barra (gradiente) e por porcentagem, cor do sufixo
 `/5h`/`/7d`, cores de status/erro/warn, cores das dicas, cores do timer,

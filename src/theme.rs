@@ -46,6 +46,7 @@ impl Theme {
 }
 
 pub struct Palette {
+    pub bg: Option<Color>,
     pub border: BorderType,
     pub border_color: Option<Color>,
     pub title: Style,
@@ -142,8 +143,14 @@ fn btop_pct(pct: f32) -> Color {
     btop_gradient_at(pct / 100.0)
 }
 
+#[cfg(test)]
+pub(crate) fn test_bg() -> Color {
+    rgb(0x1F1C23)
+}
+
 fn default_palette() -> Palette {
     Palette {
+        bg: None,
         border: BorderType::Plain,
         border_color: None,
         title: Style::default()
@@ -179,6 +186,7 @@ fn default_palette() -> Palette {
 
 fn crush_palette() -> Palette {
     Palette {
+        bg: Some(rgb(0x1F1C23)),
         border: BorderType::Rounded,
         border_color: Some(rgb(0x8B75FF)),
         title: Style::default()
@@ -219,6 +227,7 @@ fn crush_palette() -> Palette {
 fn btop_palette() -> Palette {
     let track = rgb(0x404040);
     Palette {
+        bg: None,
         border: BorderType::Plain,
         border_color: Some(rgb(0x556D59)),
         title: Style::default()
@@ -301,7 +310,6 @@ mod tests {
         let p = Theme::Crush.palette();
         assert_eq!((p.bar_fill)(50.0, 0.0), rgb(0x8B75FF));
         assert_eq!((p.bar_fill)(50.0, 1.0), rgb(0xFF60FF));
-        assert_eq!(p.border, BorderType::Rounded);
         assert_eq!(p.border_color, Some(rgb(0x8B75FF)));
     }
 
@@ -317,6 +325,13 @@ mod tests {
                 "gradient too dim at pos {pos}: #{r:02X}{g:02X}{b:02X}"
             );
         }
+    }
+
+    #[test]
+    fn only_crush_sets_a_solid_background() {
+        assert_eq!(Theme::Default.palette().bg, None);
+        assert_eq!(Theme::Crush.palette().bg, Some(rgb(0x1F1C23)));
+        assert_eq!(Theme::Btop.palette().bg, None);
     }
 
     #[test]

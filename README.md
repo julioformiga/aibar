@@ -74,8 +74,9 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 - **default** — classic aibar: rounded `[`/`]` blocks bars, green/yellow/red
   by usage threshold.
 - **crush** — Charm's Charmtone Pantera palette (as used by the Crush agent):
-  rounded lilac border (`#8B75FF`, like Crush's input box), bright white
-  title, magenta active tab, `(━┄)` bars with a Hazy→Dolly gradient
+  rounded lilac border (`#8B75FF`, like Crush's input box) over a dark
+  `#1F1C23` background painted across the whole panel, bright white title,
+  magenta active tab, `(━┄)` bars with a Hazy→Dolly gradient
   (`#8B75FF`→`#FF60FF`), mint/yellow/pink severity colors, and subtle text
   kept at `#858392` for legibility on dark backgrounds.
 - **btop** — inspired by btop's default theme: colored box border, red
