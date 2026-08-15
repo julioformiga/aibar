@@ -1,4 +1,5 @@
 use crate::model::{Provider, SourceState};
+use crate::theme::Theme;
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,6 +13,8 @@ pub struct CachedState {
     pub active_sources: HashMap<String, usize>,
     #[serde(default)]
     pub sources: Vec<CachedSource>,
+    #[serde(default)]
+    pub theme: Theme,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,6 +86,7 @@ mod tests {
 
         let state = CachedState {
             active_tab: 2,
+            theme: Theme::Btop,
             active_sources,
             sources: vec![
                 CachedSource {
@@ -124,6 +128,7 @@ mod tests {
         let loaded = cache.load().expect("cache file should load");
 
         assert_eq!(loaded.active_tab, 2);
+        assert_eq!(loaded.theme, Theme::Btop);
         assert_eq!(loaded.active_sources.get("Claude"), Some(&1));
         assert_eq!(loaded.sources.len(), 2);
 
@@ -149,6 +154,7 @@ mod tests {
     fn cached_state_default_is_empty() {
         let state = CachedState::default();
         assert_eq!(state.active_tab, 0);
+        assert_eq!(state.theme, Theme::Default);
         assert!(state.active_sources.is_empty());
         assert!(state.sources.is_empty());
     }

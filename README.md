@@ -62,9 +62,25 @@ Fallbacks without an env var:
 | `1`–`9`             | Jump directly to tab 1–9                 |
 | `Tab` / `→`         | Next tab                                 |
 | `Shift+Tab` / `←`   | Previous tab                             |
+| `↑` / `↓`           | Cycle theme (default → crush → btop)     |
 | `Enter`             | Cycle source (when a provider has more than one) |
 | `r`                 | Force refresh (30s cooldown)             |
 | `q` / `Ctrl+C`      | Quit                                     |
+
+### Themes
+
+Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
+
+- **default** — classic aibar: rounded `[`/`]` blocks bars, green/yellow/red
+  by usage threshold.
+- **crush** — Charm's Charmtone Pantera palette (as used by the Crush agent):
+  rounded lilac border (`#8B75FF`, like Crush's input box), bright white
+  title, magenta active tab, `(━┄)` bars with a Hazy→Dolly gradient
+  (`#8B75FF`→`#FF60FF`), mint/yellow/pink severity colors, and subtle text
+  kept at `#858392` for legibility on dark backgrounds.
+- **btop** — inspired by btop's default theme: colored box border, red
+  selection-highlighted tab, green→yellow→red CPU-style gradient bars with a
+  solid track.
 
 ### Optional configuration
 

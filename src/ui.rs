@@ -1,9 +1,9 @@
 use crate::app::AppState;
-use crate::config::color_for_percentage;
 use crate::model::{LimitScope, LimitWindow, Provider, SourceState, WindowKind};
+use crate::theme::Palette;
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use ratatui::Frame;
@@ -17,12 +17,19 @@ const TIMER_FILLED: char = '\u{2501}';
 const TIMER_EMPTY: char = '\u{2504}';
 
 pub fn draw(f: &mut Frame, app: &AppState) {
+    let palette = app.theme.palette();
     let area = f.area();
-    let title = breadcrumb_title(app);
-    let mut block = Block::default().borders(Borders::ALL).title(title);
+    let title = breadcrumb_title(app, &palette);
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(palette.border)
+        .title(title);
+    if let Some(c) = palette.border_color {
+        block = block.border_style(Style::default().fg(c));
+    }
 
     if !app.is_empty() {
-        if let Some(t) = build_timer_line(app) {
+        if let Some(t) = build_timer_line(app, &palette) {
             block = block.title(t.right_aligned());
         }
         let has_multi = app
@@ -31,49 +38,34 @@ pub fn draw(f: &mut Frame, app: &AppState) {
             .map(|t| t.sources.len() > 1)
             .unwrap_or(false);
         block = block
-            .title_bottom(build_status_line(app))
-            .title_bottom(build_hint_line(has_multi).right_aligned());
+            .title_bottom(build_status_line(app, &palette))
+            .title_bottom(build_hint_line(has_multi, &palette).right_aligned());
     }
 
     let inner = block.inner(area);
     block.render(area, f.buffer_mut());
 
     if app.is_empty() {
-        draw_welcome(f, inner);
+        draw_welcome(f, inner, &palette);
         return;
     }
 
-    draw_content(f, app, inner);
+    draw_content(f, app, inner, &palette);
 }
 
-fn breadcrumb_title(app: &AppState) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(
-            " AIBar ",
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .fg(Color::Cyan),
-        ),
-        Span::raw("\u{2502}"),
-    ];
+fn breadcrumb_title(app: &AppState, p: &Palette) -> Line<'static> {
+    let mut spans = vec![Span::styled(" AIBar ", p.title)];
     for (i, tab) in app.tabs.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("\u{2502}"));
-        }
+        spans.push(tab_separator(p));
         spans.push(Span::raw(" "));
         let label = tab
             .active_state()
             .map(|s| s.label().to_string())
             .unwrap_or_else(|| tab.provider.label().to_string());
         if i == app.active_tab {
-            spans.push(Span::styled(
-                label,
-                Style::default()
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                    .fg(Color::Yellow),
-            ));
+            spans.push(Span::styled(label, p.tab_active));
         } else {
-            spans.push(Span::raw(label));
+            spans.push(Span::styled(label, p.tab_inactive));
         }
         spans.push(Span::raw(" "));
     }
@@ -81,47 +73,64 @@ fn breadcrumb_title(app: &AppState) -> Line<'static> {
     Line::from(spans)
 }
 
-fn build_status_line(app: &AppState) -> Line<'static> {
+fn tab_separator(p: &Palette) -> Span<'static> {
+    match p.tab_separator {
+        Some(c) => Span::styled("\u{2502}", Style::default().fg(c)),
+        None => Span::raw("\u{2502}"),
+    }
+}
+
+fn build_status_line(app: &AppState, p: &Palette) -> Line<'static> {
     let active = app.active_state();
     if let Some(err) = active.and_then(|s| s.last_error()) {
         Line::from(Span::styled(
             format!(" {}  {} ", WARN, err),
-            Style::default().fg(Color::Red),
+            Style::default().fg(p.error),
         ))
     } else if let Some(msg) = &app.status_message {
         Line::from(Span::styled(
             format!(" {} ", msg),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(p.status),
         ))
     } else {
         Line::from("")
     }
 }
 
-fn build_hint_line(has_multi: bool) -> Line<'static> {
-    let bold = Style::default().add_modifier(Modifier::BOLD);
+fn hint_text(p: &Palette, text: &str) -> Span<'static> {
+    match p.hint_text {
+        Some(c) => Span::styled(text.to_string(), Style::default().fg(c)),
+        None => Span::raw(text.to_string()),
+    }
+}
+
+fn build_hint_line(has_multi: bool, p: &Palette) -> Line<'static> {
+    let bold = p.hint_key;
     let sep = "  ";
 
     let mut spans = Vec::new();
     if has_multi {
         spans.extend_from_slice(&[
             Span::styled("E", bold),
-            Span::raw("nter Source"),
+            hint_text(p, "nter Source"),
             Span::raw(sep),
         ]);
     }
     spans.extend_from_slice(&[
+        Span::styled("\u{2191}\u{2193}", bold),
+        hint_text(p, " Theme"),
+        Span::raw(sep),
         Span::styled("R", bold),
-        Span::raw("efresh"),
+        hint_text(p, "efresh"),
         Span::raw(sep),
         Span::styled("Q", bold),
-        Span::raw("uit"),
+        hint_text(p, "uit"),
     ]);
 
     Line::from(spans)
 }
 
-fn build_timer_line(app: &AppState) -> Option<Line<'static>> {
+fn build_timer_line(app: &AppState, p: &Palette) -> Option<Line<'static>> {
     let (started, next) = app.active_poll_timing()?;
     let now = Instant::now();
 
@@ -136,29 +145,49 @@ fn build_timer_line(app: &AppState) -> Option<Line<'static>> {
     let filled = filled.min(TIMER_BAR_W);
     let empty = TIMER_BAR_W - filled;
 
-    let spans = vec![
-        Span::raw(repeat_char(TIMER_FILLED, filled)),
-        Span::raw(repeat_char(TIMER_EMPTY, empty)),
-    ];
+    let mut spans = Vec::new();
+    match p.timer_filled {
+        Some(fill) => {
+            for i in 0..filled {
+                let pos = i as f32 / TIMER_BAR_W as f32;
+                spans.push(Span::styled(
+                    TIMER_FILLED.to_string(),
+                    Style::default().fg(fill(pos)),
+                ));
+            }
+        }
+        None => spans.push(Span::raw(repeat_char(TIMER_FILLED, filled))),
+    }
+    if empty > 0 {
+        let s = repeat_char(TIMER_EMPTY, empty);
+        spans.push(match p.timer_empty {
+            Some(c) => Span::styled(s, Style::default().fg(c)),
+            None => Span::raw(s),
+        });
+    }
 
     Some(Line::from(spans))
 }
 
-fn draw_content(f: &mut Frame, app: &AppState, area: Rect) {
+fn draw_content(f: &mut Frame, app: &AppState, area: Rect, p: &Palette) {
     let Some(state) = app.active_state() else {
         return;
     };
 
     let width = area.width as usize;
     let lines = match state {
-        SourceState::Quota(ps) => draw_quota_lines(ps, width),
-        SourceState::Ceiling(cr) => draw_ceiling_lines(cr, width),
+        SourceState::Quota(ps) => draw_quota_lines(ps, width, p),
+        SourceState::Ceiling(cr) => draw_ceiling_lines(cr, width, p),
     };
 
     Paragraph::new(lines).render(area, f.buffer_mut());
 }
 
-fn draw_quota_lines(ps: &crate::model::ProviderState, width: usize) -> Vec<Line<'static>> {
+fn draw_quota_lines(
+    ps: &crate::model::ProviderState,
+    width: usize,
+    p: &Palette,
+) -> Vec<Line<'static>> {
     let has_data = !ps.windows.is_empty();
     let cached = ps.last_error.is_some() && has_data;
 
@@ -176,29 +205,33 @@ fn draw_quota_lines(ps: &crate::model::ProviderState, width: usize) -> Vec<Line<
     if has_data {
         for (i, w) in ps.windows.iter().enumerate() {
             let show_warn = cached && i == 0;
-            lines.push(build_bar_line(w, label_w, show_warn, cached, width));
+            lines.push(build_bar_line(w, label_w, show_warn, cached, width, p));
         }
     } else {
         let kinds = placeholder_kinds(ps.provider);
         for (label, kind) in labels.iter().zip(kinds.iter()) {
-            lines.push(build_loading_line(label, *kind, label_w, width));
+            lines.push(build_loading_line(label, *kind, label_w, width, p));
         }
     }
     lines
 }
 
-fn draw_ceiling_lines(cr: &crate::model::CeilingReport, _width: usize) -> Vec<Line<'static>> {
+fn draw_ceiling_lines(
+    cr: &crate::model::CeilingReport,
+    _width: usize,
+    p: &Palette,
+) -> Vec<Line<'static>> {
     if cr.ceilings.is_empty() {
         let mut spans = Vec::new();
         if cr.last_error.is_some() {
             spans.push(Span::styled(
                 format!(" {}  ", WARN),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(p.warn),
             ));
         }
         spans.push(Span::styled(
             "Loading rate limits\u{2026}",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(p.loading),
         ));
         return vec![Line::from(spans)];
     }
@@ -222,17 +255,17 @@ fn draw_ceiling_lines(cr: &crate::model::CeilingReport, _width: usize) -> Vec<Li
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("{:>4} RPM", c.rpm),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(p.ceiling_rpm),
         ));
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("{:>6} in", fmt_count(c.in_tpm)),
-            Style::default().fg(Color::Green),
+            Style::default().fg(p.ceiling_in),
         ));
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("{:>6} out", fmt_count(c.out_tpm)),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(p.ceiling_out),
         ));
         lines.push(Line::from(spans));
     }
@@ -245,9 +278,9 @@ fn build_bar_line(
     show_warn: bool,
     cached: bool,
     width: usize,
+    p: &Palette,
 ) -> Line<'static> {
     let pct = window.percentage();
-    let color = color_for_percentage(pct);
     let label = scope_label(window);
     let countdown = reset_countdown(window.reset_at);
     let kind_str = window_kind_str(window.kind);
@@ -274,7 +307,7 @@ fn build_bar_line(
     if show_warn {
         spans.push(Span::styled(
             format!("{} ", WARN),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(p.warn),
         ));
     } else {
         spans.push(Span::raw("  "));
@@ -283,21 +316,28 @@ fn build_bar_line(
     spans.push(Span::raw(format!("{:<width$}", label, width = label_w)));
     spans.push(Span::raw(" "));
     spans.push(Span::raw(time_part));
+    spans.push(Span::styled(kind_part, Style::default().fg(p.kind)));
+    spans.push(Span::raw(p.bar_open));
+    let denom = bar_width.saturating_sub(1).max(1) as f32;
+    for i in 0..filled {
+        let pos = if bar_width > 1 { i as f32 / denom } else { 0.0 };
+        let color = (p.bar_fill)(pct, pos);
+        spans.push(Span::styled(
+            p.filled_char.to_string(),
+            Style::default().fg(color),
+        ));
+    }
+    if empty > 0 {
+        spans.push(Span::styled(
+            repeat_char(p.empty_char, empty),
+            p.empty_style,
+        ));
+    }
+    spans.push(Span::raw(p.bar_close));
     spans.push(Span::styled(
-        kind_part,
-        Style::default().fg(Color::DarkGray),
+        pct_str,
+        Style::default().fg((p.pct_color)(pct)),
     ));
-    spans.push(Span::raw(" ["));
-    spans.push(Span::styled(
-        repeat_char('\u{2588}', filled),
-        Style::default().fg(color),
-    ));
-    spans.push(Span::styled(
-        repeat_char('\u{2591}', empty),
-        Style::default().fg(Color::DarkGray),
-    ));
-    spans.push(Span::raw("] "));
-    spans.push(Span::styled(pct_str, Style::default().fg(color)));
     spans.push(Span::raw(format!(" {:<width$}", suffix, width = SUFFIX_W)));
 
     Line::from(spans)
@@ -308,6 +348,7 @@ fn build_loading_line(
     kind: WindowKind,
     label_w: usize,
     width: usize,
+    p: &Palette,
 ) -> Line<'static> {
     let prefix_len = 2 + label_w + 1 + TIME_W + 2;
     let pct_str = "  \u{2014}%";
@@ -322,29 +363,23 @@ fn build_loading_line(
     spans.push(Span::raw(format!(" {:>width$}", "--", width = TIME_W - 3)));
     spans.push(Span::styled(
         format!("/{}", kind_str),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(p.kind),
     ));
-    spans.push(Span::raw(" ["));
+    spans.push(Span::raw(p.bar_open));
     spans.push(Span::styled(
-        repeat_char('\u{2591}', bar_width),
-        Style::default().fg(Color::DarkGray),
+        repeat_char(p.empty_char, bar_width),
+        p.empty_style,
     ));
-    spans.push(Span::raw("] "));
-    spans.push(Span::styled(
-        "\u{2014}",
-        Style::default().fg(Color::DarkGray),
-    ));
+    spans.push(Span::raw(p.bar_close));
+    spans.push(Span::styled("\u{2014}", Style::default().fg(p.loading)));
 
     Line::from(spans)
 }
 
-fn draw_welcome(f: &mut Frame, area: Rect) {
+fn draw_welcome(f: &mut Frame, area: Rect, p: &Palette) {
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled(
-            "No provider detected.",
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
+        Line::from(Span::styled("No provider detected.", p.welcome_title)),
         Line::from(""),
         Line::from("Set at least one of these environment variables:"),
         Line::from(""),
@@ -439,6 +474,7 @@ fn repeat_char(ch: char, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
     use chrono::Duration as ChronoDuration;
 
     #[test]
@@ -491,5 +527,132 @@ mod tests {
     fn window_kind_str_matches_spec_format() {
         assert_eq!(window_kind_str(WindowKind::FiveHours), "5h");
         assert_eq!(window_kind_str(WindowKind::SevenDays), "7d");
+    }
+
+    #[test]
+    fn bar_line_uses_palette_chars_and_gradient() {
+        let w = LimitWindow {
+            kind: WindowKind::FiveHours,
+            scope: None,
+            used: 500,
+            limit: 1000,
+            reset_at: None,
+        };
+        let btop = Theme::Btop.palette();
+        let line = build_bar_line(&w, 7, false, false, 80, &btop);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(" 50%"), "text was: {text}");
+        assert!(!text.contains('['), "btop bars have no brackets: {text}");
+        let filled_spans: Vec<&Span> = line
+            .spans
+            .iter()
+            .filter(|s| s.content.contains('\u{2588}'))
+            .collect();
+        assert!(!filled_spans.is_empty());
+        let first_color = filled_spans[0].style.fg;
+        let last_color = filled_spans[filled_spans.len() - 1].style.fg;
+        assert_ne!(first_color, last_color);
+    }
+
+    #[test]
+    fn bar_line_default_theme_keeps_brackets() {
+        let w = LimitWindow {
+            kind: WindowKind::SevenDays,
+            scope: None,
+            used: 40,
+            limit: 1000,
+            reset_at: None,
+        };
+        let default = Theme::Default.palette();
+        let line = build_bar_line(&w, 3, false, false, 80, &default);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("["), "text was: {text}");
+        assert!(text.contains("]"));
+    }
+
+    #[test]
+    fn hint_line_includes_theme_hint() {
+        let p = Theme::Default.palette();
+        let line = build_hint_line(false, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("Theme"), "text was: {text}");
+        assert!(text.contains("Refresh"));
+        assert!(text.contains("Quit"));
+    }
+
+    #[test]
+    fn draw_renders_all_themes() {
+        use crate::app::{AppState, SourceSlot, Tab};
+        use crate::model::ProviderState;
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+        use tokio::sync::mpsc;
+
+        for theme in [Theme::Default, Theme::Crush, Theme::Btop] {
+            let (tx, _rx) = mpsc::channel(4);
+            let tab = Tab {
+                provider: Provider::Claude,
+                sources: vec![SourceSlot {
+                    id: "oauth".into(),
+                    state: SourceState::Quota(ProviderState {
+                        provider: Provider::Claude,
+                        label: "Claude (Pro)".into(),
+                        windows: vec![
+                            LimitWindow {
+                                kind: WindowKind::FiveHours,
+                                scope: None,
+                                used: 580,
+                                limit: 1000,
+                                reset_at: None,
+                            },
+                            LimitWindow {
+                                kind: WindowKind::SevenDays,
+                                scope: None,
+                                used: 950,
+                                limit: 1000,
+                                reset_at: None,
+                            },
+                        ],
+                        last_updated: None,
+                        last_error: None,
+                    }),
+                    poll_tx: tx,
+                    last_poll_at: None,
+                    next_poll_at: None,
+                }],
+                active: 0,
+            };
+            let mut app = AppState::new(vec![tab]);
+            app.theme = theme;
+
+            let backend = TestBackend::new(100, 10);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| draw(f, &app)).unwrap();
+
+            let buf = terminal.backend().buffer();
+            let mut lines = Vec::new();
+            for y in 0..10usize {
+                let line: String = (0..100usize)
+                    .map(|x| buf[(x as u16, y as u16)].symbol().to_string())
+                    .collect();
+                lines.push(line);
+            }
+            let frame = lines.join("\n");
+            assert!(frame.contains("AIBar"), "{theme:?}: missing AIBar");
+            assert!(
+                frame.contains("Claude (Pro)"),
+                "{theme:?}: missing tab label"
+            );
+            assert!(frame.contains("58%"), "{theme:?}: missing bar data");
+            assert!(frame.contains("95%"), "{theme:?}: missing second bar");
+            assert!(frame.contains("Theme"), "{theme:?}: missing hint");
+            match theme {
+                Theme::Crush => assert!(
+                    frame.contains('\u{256d}'),
+                    "crush should use rounded corners"
+                ),
+                _ => assert!(frame.contains('\u{250c}')),
+            }
+        }
     }
 }

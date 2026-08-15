@@ -1,5 +1,6 @@
 use crate::config::cooldown;
 use crate::model::{Provider, SourceState};
+use crate::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc;
 
@@ -71,6 +72,7 @@ pub struct AppState {
     pub active_tab: usize,
     pub last_refresh: Option<std::time::Instant>,
     pub status_message: Option<String>,
+    pub theme: Theme,
 }
 
 impl AppState {
@@ -80,6 +82,7 @@ impl AppState {
             active_tab: 0,
             last_refresh: None,
             status_message: None,
+            theme: Theme::default(),
         }
     }
 
@@ -125,7 +128,22 @@ impl AppState {
                 self.switch_tab((c as usize) - ('1' as usize));
                 None
             }
+            KeyCode::Down => {
+                self.set_theme(self.theme.next());
+                None
+            }
+            KeyCode::Up => {
+                self.set_theme(self.theme.prev());
+                None
+            }
             _ => None,
+        }
+    }
+
+    pub fn set_theme(&mut self, theme: Theme) {
+        if theme != self.theme {
+            self.theme = theme;
+            self.status_message = Some(format!("theme: {}", theme.label()));
         }
     }
 
@@ -455,5 +473,36 @@ mod tests {
         app.prev_tab();
         assert!(rx.try_recv().is_err());
         assert_eq!(app.active_tab, 0);
+    }
+
+    #[test]
+    fn handle_input_arrow_keys_cycle_theme_with_wrap() {
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth"])]);
+        assert_eq!(app.theme, Theme::Default);
+
+        app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Crush);
+        app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Btop);
+        app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Default);
+
+        app.handle_input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Btop);
+        app.handle_input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Crush);
+    }
+
+    #[test]
+    fn set_theme_updates_status_message_only_on_change() {
+        let mut app = AppState::new(vec![make_tab(Provider::Zai, &["default"])]);
+        app.status_message = Some("stale".into());
+
+        app.set_theme(Theme::Btop);
+        assert_eq!(app.theme, Theme::Btop);
+        assert_eq!(app.status_message.as_deref(), Some("theme: btop"));
+
+        app.set_theme(Theme::Btop);
+        assert_eq!(app.status_message.as_deref(), Some("theme: btop"));
     }
 }

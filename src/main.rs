@@ -3,6 +3,7 @@ mod app;
 mod cache;
 mod config;
 mod model;
+mod theme;
 mod ui;
 
 use crate::agents::{detect_agents, Agent};
@@ -62,6 +63,7 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
     let (tabs, initial_tab) = build_tabs(detected, &cached, app_tx.clone());
     let mut app = AppState::new(tabs);
     app.active_tab = initial_tab;
+    app.theme = cached.theme;
 
     let mut events = EventStream::new();
     let mut redraw_tick = tokio::time::interval(Duration::from_secs(1));
@@ -172,6 +174,7 @@ fn save_cache(cache: &Cache, app: &AppState) {
     }
     let snapshot = CachedState {
         active_tab: app.active_tab,
+        theme: app.theme,
         active_sources,
         sources,
     };

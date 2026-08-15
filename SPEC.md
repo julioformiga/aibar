@@ -202,10 +202,10 @@ entre o último poll e o próximo, atualizado a cada segundo.
 A linha inferior esquerda (dentro da borda) mostra status (erro ou mensagem
 de cooldown). A linha inferior direita, também embutida na borda
 (`title_bottom` alinhado à direita), mostra dicas de keybindings: o rótulo
-completo da ação (`Refresh`, `Quit`, e opcionalmente `Enter Source`),
-separados por dois espaços, com a tecla de atalho em **negrito** dentro do
-próprio rótulo (`Refresh` → `R` em negrito), em vez de uma letra solta antes
-da palavra.
+completo da ação (`↑↓ Theme`, `Refresh`, `Quit`, e opcionalmente
+`Enter Source`), separados por dois espaços, com a tecla de atalho em
+**negrito** dentro do próprio rótulo (`Refresh` → `R` em negrito), em vez de
+uma letra solta antes da palavra.
 
 > **Regra de idioma:** Todas as strings exibidas na TUI (labels, barras,
 > erros, dicas) são em **inglês**. A spec é em PT-BR, mas a UI é EN-US.
@@ -316,13 +316,37 @@ pub fn color_for_percentage(pct: f32) -> Color {
 }
 ```
 
-### 4.8 Keybindings
+### 4.8 Temas
+
+Três temas embutidos (`src/theme.rs`), alternados com `↑`/`↓` (com wrap) e
+persistidos no cache (`state.json` → `theme`). O tema ativo é exibido
+brevemente na linha de status (`theme: crush`).
+
+| Tema       | Identidade visual                                                                 |
+|------------|-----------------------------------------------------------------------------------|
+| `default`  | Visual clássico do aibar: bordas retas, barras `[█▒]`, cores por faixa (verde/amarelo/vermelho), aba ativa amarela sublinhada |
+| `crush`    | Paleta Charmtone Pantera (do agente Crush): bordas arredondadas em lilás Hazy (`#8B75FF`, como o box de input do Crush), título branco brilhante (Salt `#F7F6FB`), aba ativa magenta Dolly (`#FF60FF`), barras `(━┄)` com gradiente Hazy→Dolly (`#8B75FF`→`#FF60FF`), severidade menta/mostarda/rosa (`#00FFB2`/`#F5EF34`/`#EB4268`), texto sutil em Squid (`#858392`), timer em gradiente lilás→magenta |
+| `btop`     | Tema default do btop: borda esverdeada (`#556D59`), aba ativa com fundo vermelho selecionado (`#6A2F2F`), barras sem colchetes com gradiente CPU (`#77CA9B`→`#CBC06C`→`#DC4C4C`) sobre trilho cinza sólido, timer amarelo (`#CBC06C`) |
+
+A paleta define: tipo/cor de borda, estilo do título e das abas, separadores,
+caracteres de barra (cheio/vazio, aberturas), cor de trilho vazio, função de
+cor por posição da barra (gradiente) e por porcentagem, cor do sufixo
+`/5h`/`/7d`, cores de status/erro/warn, cores das dicas, cores do timer,
+carregando, RPM/TPM e tela de boas-vindas.
+
+No tema `default`, `bar_fill`/`pct_color` usam os mesmos thresholds de
+`color_for_percentage` (Seção 4.7), preservando o comportamento original.
+Nos temas `crush` e `btop`, cada célula da barra recebe a cor do gradiente na
+sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
+
+### 4.9 Keybindings
 
 | Key             | Action                                            |
 |-----------------|---------------------------------------------------|
 | `1`–`9`         | Jump directly to tab 1–9                          |
 | `Tab` / `→`     | Next tab                                          |
 | `Shift+Tab` / `←` | Previous tab                                    |
+| `↑` / `↓`       | Cycle theme (default → crush → btop, com wrap)    |
 | `Enter`         | Cycle source (apenas se há múltiplas fontes)      |
 | `r`             | Force refresh (30 s cooldown)                     |
 | `q` / `Ctrl+C`  | Quit                                              |
@@ -354,6 +378,7 @@ Localização: `~/.cache/aibar/state.json`
 ```json
 {
   "active_tab": 0,
+  "theme": "crush",
   "active_sources": {
     "Claude": 0,
     "Gemini": 0
@@ -400,6 +425,8 @@ Localização: `~/.cache/aibar/state.json`
 
 O cache preserva:
 - `active_tab`: última aba selecionada.
+- `theme`: último tema selecionado (`"default"`, `"crush"` ou `"btop"`);
+  ausente em caches antigos → `default` (via `#[serde(default)]`).
 - `active_sources`: última fonte ativa por provedora (ex.: `{"Claude": 0}`).
 - `sources`: snapshot completo de cada fonte, usado para exibir dados em
   cache enquanto o primeiro poll não completa.
