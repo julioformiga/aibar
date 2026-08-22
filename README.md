@@ -7,7 +7,9 @@ the **Hyper** (Charm) Hypercredit balance.
 Designed to run in a side pane (e.g. a `tmux` split) and give instant visual
 feedback on how close each account is to its limit.
 
-<img width="857" height="93" alt="image" src="https://github.com/user-attachments/assets/54f36b40-38a0-4085-ae99-1a43e40d74ca" />
+<img width="1215" height="891" alt="AIbar Crush" src="https://github.com/user-attachments/assets/f6bca729-3ec9-4dbe-86e2-6d7c2dfcc055" />
+
+<img width="1171" height="275" alt="AIbar Claude" src="https://github.com/user-attachments/assets/0ced7671-8651-4ca1-ab6a-6d94acea7527" />
 
 ## Features
 
