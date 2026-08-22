@@ -163,6 +163,48 @@ impl SourceState {
             SourceState::Credits(c) => c.last_error = Some(err),
         }
     }
+
+    /// Returns true when the observable usage of this source changed relative
+    /// to `other`. `Quota` compares every window (`used`/`limit` per kind and
+    /// scope, so a change in any window counts, not just the max); `Credits`
+    /// compares the raw balance; `Ceiling` never reports a change (it has no
+    /// percentage). A side with no data yet (`Quota` with no windows, or no
+    /// balance) is treated as "no change" so the first poll never fires.
+    pub fn usage_changed(&self, other: &SourceState) -> bool {
+        match (self, other) {
+            (SourceState::Quota(a), SourceState::Quota(b)) => {
+                if a.windows.is_empty() || b.windows.is_empty() {
+                    return false;
+                }
+                let signature = |p: &ProviderState| {
+                    let mut v: Vec<(u8, Option<u8>, u64, u64)> = p
+                        .windows
+                        .iter()
+                        .map(|w| {
+                            let kind = match w.kind {
+                                WindowKind::FiveHours => 0u8,
+                                WindowKind::SevenDays => 1u8,
+                            };
+                            let scope = match w.scope {
+                                Some(LimitScope::Standard) => Some(0u8),
+                                Some(LimitScope::ThirdParty) => Some(1u8),
+                                None => None,
+                            };
+                            (kind, scope, w.used, w.limit)
+                        })
+                        .collect();
+                    v.sort_unstable();
+                    v
+                };
+                signature(a) != signature(b)
+            }
+            (SourceState::Credits(a), SourceState::Credits(b)) => match (a.balance, b.balance) {
+                (Some(x), Some(y)) => x != y,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -275,5 +317,87 @@ mod tests {
         assert_eq!(ceiling.last_updated(), None);
         ceiling.set_error("nope".into());
         assert_eq!(ceiling.last_error(), Some("nope"));
+    }
+
+    fn quota_with(used_5h: u64, used_7d: u64) -> SourceState {
+        SourceState::Quota(ProviderState {
+            provider: Provider::Claude,
+            label: "Claude".into(),
+            windows: vec![
+                LimitWindow::from_values(
+                    WindowKind::FiveHours,
+                    None,
+                    used_5h,
+                    crate::config::NOTIONAL_LIMIT,
+                    None,
+                ),
+                LimitWindow::from_values(
+                    WindowKind::SevenDays,
+                    None,
+                    used_7d,
+                    crate::config::NOTIONAL_LIMIT,
+                    None,
+                ),
+            ],
+            last_updated: None,
+            last_error: None,
+        })
+    }
+
+    #[test]
+    fn usage_changed_detects_change_in_any_window_not_just_max() {
+        // 7d (bigger) unchanged, 5h changes: must still count as changed.
+        let before = quota_with(100, 700);
+        let after = quota_with(150, 700);
+        assert!(before.usage_changed(&after));
+    }
+
+    #[test]
+    fn usage_changed_is_false_when_windows_identical() {
+        let a = quota_with(100, 700);
+        let b = quota_with(100, 700);
+        assert!(!a.usage_changed(&b));
+    }
+
+    #[test]
+    fn usage_changed_ignores_first_poll_with_no_prior_data() {
+        let empty = SourceState::Quota(ProviderState {
+            provider: Provider::Claude,
+            label: "Claude".into(),
+            windows: vec![],
+            last_updated: None,
+            last_error: None,
+        });
+        let filled = quota_with(100, 700);
+        assert!(!empty.usage_changed(&filled));
+        assert!(!filled.usage_changed(&empty));
+    }
+
+    #[test]
+    fn usage_changed_compares_credits_balance() {
+        let credits = |b: Option<f64>| {
+            SourceState::Credits(CreditsState {
+                label: "Hyper".into(),
+                balance: b,
+                last_updated: None,
+                last_error: None,
+            })
+        };
+        assert!(credits(Some(90.0)).usage_changed(&credits(Some(80.0))));
+        assert!(!credits(Some(90.0)).usage_changed(&credits(Some(90.0))));
+        assert!(!credits(None).usage_changed(&credits(Some(90.0))));
+    }
+
+    #[test]
+    fn usage_changed_never_fires_for_ceiling() {
+        let ceiling = |label: &str| {
+            SourceState::Ceiling(CeilingReport {
+                label: label.into(),
+                ceilings: vec![],
+                last_updated: None,
+                last_error: None,
+            })
+        };
+        assert!(!ceiling("a").usage_changed(&ceiling("b")));
     }
 }

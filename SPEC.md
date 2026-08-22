@@ -178,6 +178,10 @@ impl SourceState {
     pub fn last_error(&self) -> Option<&str>;
     pub fn last_updated(&self) -> Option<DateTime<Utc>>;
     pub fn set_error(&mut self, err: String);
+    /// Detecta mudança observável de uso vs. outro snapshot, usada pelo
+    /// watch mode. Quota compara cada janela (used/limit por kind+scope);
+    /// Credits compara o saldo; Ceiling nunca muda.
+    pub fn usage_changed(&self, other: &SourceState) -> bool;
 }
 ```
 
@@ -214,7 +218,7 @@ entre o último poll e o próximo, atualizado a cada segundo.
 A linha inferior esquerda (dentro da borda) mostra status (erro ou mensagem
 de cooldown). A linha inferior direita, também embutida na borda
 (`title_bottom` alinhado à direita), mostra dicas de keybindings: o rótulo
-completo da ação (`↑↓ Theme`, `Refresh`, `Quit`, e opcionalmente
+completo da ação (`↑↓ Theme`, `Watch`, `Refresh`, `Quit`, e opcionalmente
 `Enter Source`), separados por dois espaços, com a tecla de atalho em
 **negrito** dentro do próprio rótulo (`Refresh` → `R` em negrito), em vez de
 uma letra solta antes da palavra.
@@ -295,7 +299,28 @@ Nesse caso, o label da aba mostra a fonte ativa e `Enter` alterna (cycle)
 entre as fontes disponíveis. A dica "Enter Source" aparece na linha de
 hints quando há múltiplas fontes.
 
-### 4.7 Estados Especiais
+### 4.7 Watch Mode (auto-switch por mudança de uso)
+
+A tecla `w` alterna o **watch mode**. Quando ativo, todas as fontes continuam
+polling em segundo plano (mesmo as de abas inativas) e, ao detectar uma
+mudança no uso de uma fonte, o aibar troca automaticamente para a aba
+daquela provedora. A linha de status exibe brevemente `watch on`
+ou `watch off`.
+
+A detecção de mudança (`SourceState::usage_changed`) compara o estado de cada
+fonte:
+
+- **Quota** — compara cada janela individualmente (`used`/`limit` por
+  `kind` + `scope`). Uma mudança em qualquer janela conta, não apenas na de
+  maior uso (ex.: o consumo de 5h pode subir enquanto o de 7d permanece).
+- **Credits** — compara o saldo bruto (`balance`).
+- **Ceiling** — nunca dispara auto-switch (não tem métrica de uso).
+
+Uma fonte sem dado prévio (primeiro fetch com janelas vazias, ou sem saldo)
+nunca dispara a troca. Com o watch desligado, o comportamento volta ao
+padrão: apenas a aba ativa faz polling e nenhuma troca automática ocorre.
+
+### 4.8 Estados Especiais
 
 **Carregando (primeira carga):**
 
@@ -328,7 +353,7 @@ Erros também aparecem na linha de status inferior em vermelho.
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.8 Sistema de Cores
+### 4.9 Sistema de Cores
 
 | Faixa de uso    | Cor      | Constante (`ratatui::style::Color`)   |
 |-----------------|----------|---------------------------------------|
@@ -348,7 +373,7 @@ pub fn color_for_percentage(pct: f32) -> Color {
 }
 ```
 
-### 4.9 Temas
+### 4.10 Temas
 
 Três temas embutidos (`src/theme.rs`), alternados com `↑`/`↓` (com wrap) e
 persistidos no cache (`state.json` → `theme`). O tema ativo é exibido
@@ -373,7 +398,7 @@ No tema `default`, `bar_fill`/`pct_color` usam os mesmos thresholds de
 Nos temas `crush` e `btop`, cada célula da barra recebe a cor do gradiente na
 sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 
-### 4.10 Keybindings
+### 4.11 Keybindings
 
 | Key             | Action                                            |
 |-----------------|---------------------------------------------------|
@@ -383,6 +408,7 @@ sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 | `↑` / `↓`       | Cycle theme (default → crush → btop, com wrap)    |
 | `Enter`         | Cycle source (apenas se há múltiplas fontes)      |
 | `r`             | Force refresh (30 s cooldown)                     |
+| `w`             | Toggle watch mode (auto-switch ao mudar uso)      |
 | `q` / `Ctrl+C`  | Quit                                              |
 
 ---
@@ -697,6 +723,8 @@ pub struct AppState {
     pub active_tab: usize,
     pub last_refresh: Option<Instant>,
     pub status_message: Option<String>,
+    pub theme: Theme,
+    pub watch_mode: bool,  // auto-switch ao mudar porcentagem de uso
 }
 
 impl AppState {
@@ -709,6 +737,7 @@ impl AppState {
     pub fn apply_error(&mut self, provider, source_id, error);
     pub fn apply_scheduled(&mut self, provider, source_id, next_at);
     pub fn active_poll_timing(&self) -> Option<(Instant, Instant)>;
+    pub fn toggle_watch_mode(&mut self);
 }
 ```
 

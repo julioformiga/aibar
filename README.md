@@ -19,6 +19,8 @@ feedback on how close each account is to its limit.
   key), cycled with `Enter`.
 - Background async polling, non-blocking UI, with a countdown timer to the
   next poll.
+- Watch mode (`w`): keep all sources polling and automatically switch to a
+  provider's tab whenever its usage percentage changes.
 - Local cache (`~/.cache/aibar/state.json`) so the last known state survives
   restarts.
 
@@ -69,6 +71,7 @@ Fallbacks without an env var:
 | `↑` / `↓`           | Cycle theme (default → crush → btop)     |
 | `Enter`             | Cycle source (when a provider has more than one) |
 | `r`                 | Force refresh (30s cooldown)             |
+| `w`                 | Toggle watch mode (auto-switch on change) |
 | `q` / `Ctrl+C`      | Quit                                     |
 
 ### Themes

@@ -4,6 +4,7 @@ use crate::model::{CreditsState, Provider, SourceState};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::Value;
+use std::process::Command;
 
 pub struct HyperAgent {
     key: String,
@@ -14,12 +15,27 @@ impl HyperAgent {
     pub fn from_env() -> Option<Self> {
         let key = std::env::var("HYPER_API_KEY")
             .ok()
-            .filter(|s| !s.is_empty())?;
+            .filter(|s| !s.is_empty())
+            .or_else(read_key_from_pass)?;
         let client = reqwest::Client::builder()
             .timeout(http_timeout())
             .build()
             .ok()?;
         Some(Self { key, client })
+    }
+}
+
+fn read_key_from_pass() -> Option<String> {
+    let output = Command::new("pass").arg("HYPER_API_KEY").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let key = String::from_utf8(output.stdout).ok()?;
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }
 

@@ -73,6 +73,9 @@ pub struct AppState {
     pub last_refresh: Option<std::time::Instant>,
     pub status_message: Option<String>,
     pub theme: Theme,
+    /// When true, all sources keep polling in the background and a detected
+    /// usage-percentage change automatically switches to that tab.
+    pub watch_mode: bool,
 }
 
 impl AppState {
@@ -83,6 +86,7 @@ impl AppState {
             last_refresh: None,
             status_message: None,
             theme: Theme::default(),
+            watch_mode: false,
         }
     }
 
@@ -107,6 +111,10 @@ impl AppState {
             }
             KeyCode::Char('r') => {
                 self.request_refresh();
+                None
+            }
+            KeyCode::Char('w') => {
+                self.toggle_watch_mode();
                 None
             }
             KeyCode::Enter => {
@@ -170,13 +178,37 @@ impl AppState {
     fn set_active_tab(&mut self, idx: usize) {
         if let Some(tab) = self.tabs.get(self.active_tab) {
             for slot in &tab.sources {
-                let _ = slot.poll_tx.try_send(PollCommand::Pause);
+                if !self.watch_mode {
+                    let _ = slot.poll_tx.try_send(PollCommand::Pause);
+                }
             }
         }
         self.active_tab = idx;
         if let Some(tab) = self.tabs.get(idx) {
             for slot in &tab.sources {
                 let _ = slot.poll_tx.try_send(PollCommand::Resume);
+            }
+        }
+    }
+
+    pub fn toggle_watch_mode(&mut self) {
+        self.watch_mode = !self.watch_mode;
+        if self.watch_mode {
+            for tab in &self.tabs {
+                for slot in &tab.sources {
+                    let _ = slot.poll_tx.try_send(PollCommand::Resume);
+                }
+            }
+        } else {
+            // Re-pause every source except those of the active tab.
+            for (i, tab) in self.tabs.iter().enumerate() {
+                for slot in &tab.sources {
+                    let _ = slot.poll_tx.try_send(if i == self.active_tab {
+                        PollCommand::Resume
+                    } else {
+                        PollCommand::Pause
+                    });
+                }
             }
         }
     }
@@ -205,9 +237,17 @@ impl AppState {
     }
 
     pub fn apply_update(&mut self, provider: Provider, source_id: &str, state: SourceState) {
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.provider == provider) {
-            if let Some(slot) = tab.sources.iter_mut().find(|s| s.id == source_id) {
+        if let Some(tab_idx) = self.tabs.iter().position(|t| t.provider == provider) {
+            if let Some(slot) = self.tabs[tab_idx]
+                .sources
+                .iter_mut()
+                .find(|s| s.id == source_id)
+            {
+                let pct_changed = slot.state.usage_changed(&state);
                 slot.state = state;
+                if pct_changed && self.watch_mode {
+                    self.switch_tab(tab_idx);
+                }
             }
         }
         self.status_message = None;
@@ -504,5 +544,88 @@ mod tests {
 
         app.set_theme(Theme::Btop);
         assert_eq!(app.status_message.as_deref(), Some("theme: btop"));
+    }
+
+    #[test]
+    fn apply_update_switches_tab_on_percentage_change_in_watch_mode() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+        ]);
+
+        app.watch_mode = true;
+
+        // Initial update: no previous percentage, so no switch.
+        let first = quota_state(Provider::Claude, 10);
+        app.apply_update(Provider::Claude, "oauth", first);
+        assert_eq!(app.active_tab, 0);
+
+        // Percentage changed → switches to the Claude tab (already 0 here,
+        // so switch to the Z.ai tab by updating its percentage instead).
+        let first_zai = quota_state(Provider::Zai, 5);
+        app.apply_update(Provider::Zai, "default", first_zai);
+        assert_eq!(app.active_tab, 0);
+
+        // Update Z.ai again with a changed percentage → switches to tab 1.
+        let changed_zai = quota_state(Provider::Zai, 55);
+        app.apply_update(Provider::Zai, "default", changed_zai);
+        assert_eq!(app.active_tab, 1);
+    }
+
+    #[test]
+    fn apply_update_does_not_switch_when_watch_mode_off() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+        ]);
+
+        app.apply_update(Provider::Zai, "default", quota_state(Provider::Zai, 5));
+        app.apply_update(Provider::Zai, "default", quota_state(Provider::Zai, 55));
+        assert_eq!(app.active_tab, 0);
+    }
+
+    #[tokio::test]
+    async fn toggle_watch_mode_resumes_all_sources() {
+        let (tx0, mut rx0) = mpsc::channel(4);
+        let (tx1, mut rx1) = mpsc::channel(4);
+        let mut app = AppState::new(vec![
+            Tab {
+                provider: Provider::Claude,
+                sources: vec![make_slot(Provider::Claude, "oauth", tx0)],
+                active: 0,
+            },
+            Tab {
+                provider: Provider::Zai,
+                sources: vec![make_slot(Provider::Zai, "default", tx1)],
+                active: 0,
+            },
+        ]);
+
+        app.toggle_watch_mode();
+        assert!(app.watch_mode);
+        assert!(matches!(rx1.recv().await, Some(PollCommand::Resume)));
+        assert!(matches!(rx0.recv().await, Some(PollCommand::Resume)));
+
+        app.toggle_watch_mode();
+        assert!(!app.watch_mode);
+        // Active tab (Claude) keeps resuming, Z.ai is paused again.
+        assert!(matches!(rx0.recv().await, Some(PollCommand::Resume)));
+        assert!(matches!(rx1.recv().await, Some(PollCommand::Pause)));
+    }
+
+    fn quota_state(provider: Provider, used: u64) -> SourceState {
+        SourceState::Quota(ProviderState {
+            provider,
+            label: provider.label().to_string(),
+            windows: vec![crate::model::LimitWindow::from_values(
+                crate::model::WindowKind::FiveHours,
+                None,
+                used,
+                crate::config::NOTIONAL_LIMIT,
+                None,
+            )],
+            last_updated: None,
+            last_error: None,
+        })
     }
 }

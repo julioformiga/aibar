@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, app: &AppState) {
             .unwrap_or(false);
         block = block
             .title_bottom(build_status_line(app, &palette))
-            .title_bottom(build_hint_line(has_multi, &palette).right_aligned());
+            .title_bottom(build_hint_line(has_multi, app.watch_mode, &palette).right_aligned());
     }
 
     let inner = block.inner(area);
@@ -112,7 +112,7 @@ fn hint_text(p: &Palette, text: &str) -> Span<'static> {
     }
 }
 
-fn build_hint_line(has_multi: bool, p: &Palette) -> Line<'static> {
+fn build_hint_line(has_multi: bool, watch_mode: bool, p: &Palette) -> Line<'static> {
     let bold = p.hint_key;
     let sep = "  ";
 
@@ -124,9 +124,18 @@ fn build_hint_line(has_multi: bool, p: &Palette) -> Line<'static> {
             Span::raw(sep),
         ]);
     }
+    let watch_state = if watch_mode {
+        Span::styled("(on)", bold)
+    } else {
+        hint_text(p, "(off)")
+    };
     spans.extend_from_slice(&[
         Span::styled("\u{2191}\u{2193}", bold),
         hint_text(p, " Theme"),
+        Span::raw(sep),
+        Span::styled("W", bold),
+        hint_text(p, "atch "),
+        watch_state,
         Span::raw(sep),
         Span::styled("R", bold),
         hint_text(p, "efresh"),
@@ -473,7 +482,7 @@ fn draw_welcome(f: &mut Frame, area: Rect, p: &Palette) {
         Line::from("  export HYPER_API_KEY=\"...\"       # Hyper (Charm)"),
         Line::from(""),
         Line::from("Fallbacks: ~/.claude/.credentials.json,"),
-        Line::from("  pass Z_AI_API_KEY, Antigravity (agy)"),
+        Line::from("  pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy)"),
         Line::from(""),
         Line::from("[q] Quit"),
     ];
@@ -727,11 +736,24 @@ mod tests {
     #[test]
     fn hint_line_includes_theme_hint() {
         let p = Theme::Default.palette();
-        let line = build_hint_line(false, &p);
+        let line = build_hint_line(false, false, &p);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("Theme"), "text was: {text}");
         assert!(text.contains("Refresh"));
         assert!(text.contains("Quit"));
+    }
+
+    #[test]
+    fn hint_line_shows_watch_state() {
+        let p = Theme::Default.palette();
+
+        let off = build_hint_line(false, false, &p);
+        let off_text: String = off.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(off_text.contains("Watch (off)"), "text was: {off_text}");
+
+        let on = build_hint_line(false, true, &p);
+        let on_text: String = on.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(on_text.contains("Watch (on)"), "text was: {on_text}");
     }
 
     #[test]
