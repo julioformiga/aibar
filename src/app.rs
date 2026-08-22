@@ -86,7 +86,7 @@ impl AppState {
             last_refresh: None,
             status_message: None,
             theme: Theme::default(),
-            watch_mode: false,
+            watch_mode: true,
         }
     }
 
@@ -490,6 +490,8 @@ mod tests {
             },
         ]);
 
+        // Watch mode defaults to on, so pause only happens when it is off.
+        app.watch_mode = false;
         app.switch_tab(1);
         assert!(matches!(rx0.recv().await, Some(PollCommand::Pause)));
         assert!(matches!(rx1.recv().await, Some(PollCommand::Resume)));
@@ -578,6 +580,7 @@ mod tests {
             make_tab(Provider::Claude, &["oauth"]),
             make_tab(Provider::Zai, &["default"]),
         ]);
+        app.watch_mode = false;
 
         app.apply_update(Provider::Zai, "default", quota_state(Provider::Zai, 5));
         app.apply_update(Provider::Zai, "default", quota_state(Provider::Zai, 55));
@@ -600,6 +603,7 @@ mod tests {
                 active: 0,
             },
         ]);
+        app.watch_mode = false;
 
         app.toggle_watch_mode();
         assert!(app.watch_mode);
