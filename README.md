@@ -1,7 +1,8 @@
 # aibar
 
 A minimal terminal UI (TUI) that monitors API rate limits for **Claude**,
-**Z.ai**, and **Gemini** — 5-hour and 7-day usage windows at a glance.
+**Z.ai**, and **Gemini** — 5-hour and 7-day usage windows at a glance — plus
+the **Hyper** (Charm) Hypercredit balance.
 
 Designed to run in a side pane (e.g. a `tmux` split) and give instant visual
 feedback on how close each account is to its limit.
@@ -45,6 +46,7 @@ Set at least one of the following environment variables, then run `aibar`:
 | `ANTHROPIC_API_KEY`   | Claude   | Claude (API) source               |
 | `ZAI_API_KEY`         | Z.ai     | Z.ai source (or `pass Z_AI_API_KEY`) |
 | `GEMINI_API_KEY`      | Gemini   | Gemini source (optional if Antigravity/`agy` is installed) |
+| `HYPER_API_KEY`       | Hyper    | Hyper (Charm) Hypercredit balance |
 | `CLAUDE_CONFIG_DIR`   | Claude   | Alternate directory for OAuth credentials |
 
 Fallbacks without an env var:

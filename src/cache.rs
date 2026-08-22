@@ -55,7 +55,9 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Ceiling, CeilingReport, LimitWindow, ProviderState, WindowKind};
+    use crate::model::{
+        Ceiling, CeilingReport, CreditsState, LimitWindow, ProviderState, WindowKind,
+    };
 
     fn temp_cache_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -139,12 +141,14 @@ mod tests {
                 assert_eq!(ps.windows[0].used, 580);
             }
             SourceState::Ceiling(_) => panic!("expected Quota state"),
+            SourceState::Credits(_) => panic!("expected Quota state"),
         }
         match &loaded.sources[1].state {
             SourceState::Ceiling(cr) => {
                 assert_eq!(cr.ceilings[0].rpm, 50);
             }
             SourceState::Quota(_) => panic!("expected Ceiling state"),
+            SourceState::Credits(_) => panic!("expected Ceiling state"),
         }
 
         let _ = fs::remove_dir_all(cache.path.parent().unwrap());
@@ -157,5 +161,39 @@ mod tests {
         assert_eq!(state.theme, Theme::Default);
         assert!(state.active_sources.is_empty());
         assert!(state.sources.is_empty());
+    }
+
+    #[test]
+    fn save_then_load_round_trips_credits_state() {
+        let cache = Cache {
+            path: temp_cache_path("credits"),
+        };
+
+        let state = CachedState {
+            sources: vec![CachedSource {
+                provider: Provider::Hyper,
+                source_id: "default".into(),
+                state: SourceState::Credits(CreditsState {
+                    label: "Hyper".into(),
+                    balance: Some(42.5),
+                    last_updated: None,
+                    last_error: None,
+                }),
+            }],
+            ..CachedState::default()
+        };
+
+        cache.save(&state).unwrap();
+        let loaded = cache.load().expect("cache file should load");
+
+        match &loaded.sources[0].state {
+            SourceState::Credits(cs) => {
+                assert_eq!(cs.label, "Hyper");
+                assert_eq!(cs.balance, Some(42.5));
+            }
+            _ => panic!("expected Credits state"),
+        }
+
+        let _ = fs::remove_dir_all(cache.path.parent().unwrap());
     }
 }

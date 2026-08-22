@@ -75,6 +75,7 @@ pub enum Provider {
     Claude,
     Zai,
     Gemini,
+    Hyper,
 }
 
 impl Provider {
@@ -83,6 +84,7 @@ impl Provider {
             Provider::Claude => "Claude",
             Provider::Zai => "Z.ai",
             Provider::Gemini => "Gemini",
+            Provider::Hyper => "Hyper",
         }
     }
 }
@@ -112,10 +114,20 @@ pub struct CeilingReport {
     pub last_error: Option<String>,
 }
 
+/// Snapshot de saldo de créditos pré-pagos (ex.: Hypercredits do Hyper).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreditsState {
+    pub label: String,
+    pub balance: Option<f64>,
+    pub last_updated: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SourceState {
     Quota(ProviderState),
     Ceiling(CeilingReport),
+    Credits(CreditsState),
 }
 
 impl SourceState {
@@ -123,6 +135,7 @@ impl SourceState {
         match self {
             SourceState::Quota(p) => &p.label,
             SourceState::Ceiling(c) => &c.label,
+            SourceState::Credits(c) => &c.label,
         }
     }
 
@@ -130,6 +143,7 @@ impl SourceState {
         match self {
             SourceState::Quota(p) => p.last_error.as_deref(),
             SourceState::Ceiling(c) => c.last_error.as_deref(),
+            SourceState::Credits(c) => c.last_error.as_deref(),
         }
     }
 
@@ -138,6 +152,7 @@ impl SourceState {
         match self {
             SourceState::Quota(p) => p.last_updated,
             SourceState::Ceiling(c) => c.last_updated,
+            SourceState::Credits(c) => c.last_updated,
         }
     }
 
@@ -145,6 +160,7 @@ impl SourceState {
         match self {
             SourceState::Quota(p) => p.last_error = Some(err),
             SourceState::Ceiling(c) => c.last_error = Some(err),
+            SourceState::Credits(c) => c.last_error = Some(err),
         }
     }
 }

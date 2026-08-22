@@ -1,6 +1,6 @@
 # aibar — Especificação Técnica
 
-> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai e Gemini.
+> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai e Gemini, e saldo de Hypercredits para Hyper (Charm).
 
 ---
 
@@ -117,10 +117,11 @@ pub enum Provider {
     Claude,
     Zai,
     Gemini,
+    Hyper,
 }
 
 impl Provider {
-    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini"
+    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini", "Hyper"
 }
 ```
 
@@ -156,10 +157,20 @@ pub struct CeilingReport {
     pub last_error: Option<String>,
 }
 
+/// Saldo de créditos pré-pagos (ex.: Hypercredits do Hyper).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreditsState {
+    pub label: String,
+    pub balance: Option<f64>,
+    pub last_updated: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum SourceState {
     Quota(ProviderState),    // Barras de progresso (Claude OAuth, Z.ai, Gemini)
     Ceiling(CeilingReport),  // Tabela RPM/TPM (Claude API key)
+    Credits(CreditsState),   // Barra de saldo (Hyper)
 }
 
 impl SourceState {
@@ -178,6 +189,7 @@ impl SourceState {
 | Claude API key (Console)  | `Ceiling`    | API retorna tetos RPM/TPM, não janelas             |
 | Z.ai                      | `Quota`      | API retorna usado/total por janela                 |
 | Gemini (Antigravity/agy)  | `Quota`      | Servidor local retorna fração restante por janela  |
+| Hyper (Charm)             | `Credits`    | API retorna saldo de Hypercredits, não janelas     |
 
 ---
 
@@ -257,14 +269,33 @@ A ordem das barras é sempre: Google 5h, Google 7d, Partner 5h, Partner 7d.
 Cada linha mostra o grupo (nome do modelo sem timestamp), RPM em ciano,
 TPM de entrada em verde, TPM de saída em amarelo.
 
-### 4.5 Múltiplas Fontes por Provedora
+### 4.5 Aba Credits — Saldo (Hyper)
+
+```
+┌ Hyper ─────────────────────────────────────────────━━━━━━┄┄┄┄┄┄┄┄┄┄┄─┐
+│  Credits  [███████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░]  23% bal 77 │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+A API de credits do Hyper (`GET /v1/credits`) retorna apenas o saldo
+(`{"balance": 100}`), não janelas de uso. A barra representa o quanto da
+**mesada gratuita mensal** (`HYPER_FREE_CREDITS` = 100 Hypercredits) já foi
+consumida: `spent = 100 - balance` (0 quando o saldo excede a mesada, ex.:
+creditos comprados), mantendo a semântica das demais barras (barra cheia e
+vermelha = quase sem créditos). O sufixo à direita mostra o saldo absoluto
+(`bal 77`; valores fracionários com 1 casa decimal, ex. `bal 42.5`).
+
+Estados especiais: antes do primeiro fetch exibe "Loading credits…"; em erro
+com dados em cache, o prefixo `⚠` e o sufixo `(cached)` — igual às abas Quota.
+
+### 4.6 Múltiplas Fontes por Provedora
 
 Uma provedora pode ter múltiplas fontes (ex.: Claude OAuth + Claude API key).
 Nesse caso, o label da aba mostra a fonte ativa e `Enter` alterna (cycle)
 entre as fontes disponíveis. A dica "Enter Source" aparece na linha de
 hints quando há múltiplas fontes.
 
-### 4.6 Estados Especiais
+### 4.7 Estados Especiais
 
 **Carregando (primeira carga):**
 
@@ -290,13 +321,14 @@ Erros também aparecem na linha de status inferior em vermelho.
 │    export ANTHROPIC_API_KEY="..."   # Claude (API)                  │
 │    export ZAI_API_KEY="..."         # Z.ai                          │
 │    export GEMINI_API_KEY="..."      # Gemini                        │
+│    export HYPER_API_KEY="..."       # Hyper (Charm)                 │
 │  Fallbacks: ~/.claude/.credentials.json,                            │
 │    pass Z_AI_API_KEY, Antigravity (agy)                             │
 │  [q] Quit                                                           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.7 Sistema de Cores
+### 4.8 Sistema de Cores
 
 | Faixa de uso    | Cor      | Constante (`ratatui::style::Color`)   |
 |-----------------|----------|---------------------------------------|
@@ -316,7 +348,7 @@ pub fn color_for_percentage(pct: f32) -> Color {
 }
 ```
 
-### 4.8 Temas
+### 4.9 Temas
 
 Três temas embutidos (`src/theme.rs`), alternados com `↑`/`↓` (com wrap) e
 persistidos no cache (`state.json` → `theme`). O tema ativo é exibido
@@ -337,11 +369,11 @@ cor por posição da barra (gradiente) e por porcentagem, cor do sufixo
 carregando, RPM/TPM e tela de boas-vindas.
 
 No tema `default`, `bar_fill`/`pct_color` usam os mesmos thresholds de
-`color_for_percentage` (Seção 4.7), preservando o comportamento original.
+`color_for_percentage` (Seção 4.8), preservando o comportamento original.
 Nos temas `crush` e `btop`, cada célula da barra recebe a cor do gradiente na
 sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 
-### 4.9 Keybindings
+### 4.10 Keybindings
 
 | Key             | Action                                            |
 |-----------------|---------------------------------------------------|
@@ -549,7 +581,21 @@ pub trait Agent: Send + Sync {
     Google 7d, Partner 5h, Partner 7d), usando `from_fraction` com
     `1.0 - remainingFraction`. Ordenação fixa por (scope, kind).
 
-### 6.5 Detecção de Credenciais
+### 6.5 Hyper — Charm (`agents/hyper.rs` → `HyperAgent`)
+
+- **Detecção:** Variável de ambiente `HYPER_API_KEY` (não vazia). Sem
+  fallback.
+- **Label:** `"Hyper"`
+- **source_id:** `"default"`
+- **Endpoint:** `GET https://hyper.charm.land/v1/credits`
+- **Auth:** `Authorization: Bearer $HYPER_API_KEY`
+- **Resposta:** `{"balance": <number>}` — saldo atual de Hypercredits da
+  equipe autenticada (cada usuário recebe 100 Hypercredits/mês grátis).
+- **Mapeamento:** `SourceState::Credits` com `balance` (ver Seção 4.5 para a
+  renderização). Erros 401 (`authentication_error`) viram erro HTTP do
+  reqwest e seguem o fluxo padrão de erro/backoff.
+
+### 6.6 Detecção de Credenciais
 
 ```rust
 fn detect_agents() -> Vec<Box<dyn Agent>> {
@@ -569,6 +615,10 @@ fn detect_agents() -> Vec<Box<dyn Agent>> {
     }
     // Gemini (env var ou logs do agy)
     if let Some(a) = GeminiAgent::from_env() {
+        agents.push(Box::new(a));
+    }
+    // Hyper (Charm)
+    if let Some(a) = HyperAgent::from_env() {
         agents.push(Box::new(a));
     }
     agents
@@ -598,6 +648,7 @@ src/
     ├── mod.rs           # Trait Agent, detect_agents()
     ├── claude.rs        # ClaudeOAuthAgent + ClaudeApiAgent
     ├── zai.rs           # ZaiAgent
+    ├── hyper.rs         # HyperAgent (credits do Hyper/Charm)
     └── gemini.rs        # GeminiAgent
 ```
 

@@ -1,5 +1,6 @@
 pub mod claude;
 pub mod gemini;
+pub mod hyper;
 pub mod zai;
 
 use crate::model::{Provider, SourceState};
@@ -40,6 +41,13 @@ pub fn detect_agents() -> Vec<Box<dyn Agent>> {
             agents.push(Box::new(a));
         }
         None => tracing::info!("gemini not detected"),
+    }
+    match hyper::HyperAgent::from_env() {
+        Some(a) => {
+            tracing::info!("detected hyper");
+            agents.push(Box::new(a));
+        }
+        None => tracing::info!("hyper not detected"),
     }
     agents
 }

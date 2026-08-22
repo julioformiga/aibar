@@ -1,5 +1,6 @@
 use crate::app::AppState;
-use crate::model::{LimitScope, LimitWindow, Provider, SourceState, WindowKind};
+use crate::config::HYPER_FREE_CREDITS;
+use crate::model::{CreditsState, LimitScope, LimitWindow, Provider, SourceState, WindowKind};
 use crate::theme::Palette;
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Alignment, Rect};
@@ -185,6 +186,7 @@ fn draw_content(f: &mut Frame, app: &AppState, area: Rect, p: &Palette) {
     let lines = match state {
         SourceState::Quota(ps) => draw_quota_lines(ps, width, p),
         SourceState::Ceiling(cr) => draw_ceiling_lines(cr, width, p),
+        SourceState::Credits(cs) => draw_credits_lines(cs, width, p),
     };
 
     Paragraph::new(lines).render(area, f.buffer_mut());
@@ -277,6 +279,81 @@ fn draw_ceiling_lines(
         lines.push(Line::from(spans));
     }
     lines
+}
+
+fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'static> {
+    let Some(balance) = cs.balance else {
+        return Line::from(Span::styled(
+            "  Loading credits\u{2026}",
+            Style::default().fg(p.loading),
+        ));
+    };
+
+    let cached = cs.last_error.is_some();
+    let allowance = HYPER_FREE_CREDITS.max(balance);
+    let spent = allowance - balance;
+    let pct = if allowance > 0.0 {
+        ((spent / allowance) * 100.0) as f32
+    } else {
+        0.0
+    };
+
+    let label = "Credits";
+    let label_w = label.len();
+    let pct_str = format!("{:>3.0}%", pct);
+    let suffix = if cached {
+        "(cached)".to_string()
+    } else {
+        format!("bal {}", fmt_balance(balance))
+    };
+
+    let prefix_len = 2 + label_w + 1;
+    let suffix_len = 1 + pct_str.len() + 1 + SUFFIX_W;
+    let bar_width = width.saturating_sub(prefix_len + suffix_len + 2).max(10);
+
+    let filled = ((bar_width as f32) * (pct / 100.0)).round() as usize;
+    let filled = filled.min(bar_width);
+    let empty = bar_width - filled;
+
+    let mut spans = Vec::new();
+    if cached {
+        spans.push(Span::styled(
+            format!("{} ", WARN),
+            Style::default().fg(p.warn),
+        ));
+    } else {
+        spans.push(Span::raw("  "));
+    }
+    spans.push(Span::raw(label.to_string()));
+    spans.push(Span::raw(" "));
+    spans.push(Span::raw(p.bar_open));
+    let denom = bar_width.saturating_sub(1).max(1) as f32;
+    for i in 0..filled {
+        let pos = if bar_width > 1 { i as f32 / denom } else { 0.0 };
+        let color = (p.bar_fill)(pct, pos);
+        spans.push(Span::styled(
+            p.filled_char.to_string(),
+            Style::default().fg(color),
+        ));
+    }
+    if empty > 0 {
+        spans.push(Span::styled(
+            repeat_char(p.empty_char, empty),
+            p.empty_style,
+        ));
+    }
+    spans.push(Span::raw(p.bar_close));
+    spans.push(Span::styled(
+        pct_str,
+        Style::default().fg((p.pct_color)(pct)),
+    ));
+    spans.push(Span::raw(format!(" {:<width$}", suffix, width = SUFFIX_W)));
+
+    Line::from(spans)
+}
+
+fn draw_credits_lines(cs: &CreditsState, width: usize, p: &Palette) -> Vec<Line<'static>> {
+    vec![build_credits_line(cs, width, p)]
 }
 
 fn build_bar_line(
@@ -393,6 +470,7 @@ fn draw_welcome(f: &mut Frame, area: Rect, p: &Palette) {
         Line::from("  export ANTHROPIC_API_KEY=\"...\"   # Claude (API)"),
         Line::from("  export ZAI_API_KEY=\"...\"         # Z.ai"),
         Line::from("  export GEMINI_API_KEY=\"...\"      # Gemini"),
+        Line::from("  export HYPER_API_KEY=\"...\"       # Hyper (Charm)"),
         Line::from(""),
         Line::from("Fallbacks: ~/.claude/.credentials.json,"),
         Line::from("  pass Z_AI_API_KEY, Antigravity (agy)"),
@@ -422,6 +500,7 @@ fn window_kind_str(kind: WindowKind) -> &'static str {
 fn placeholder_labels(provider: Provider) -> Vec<String> {
     match provider {
         Provider::Claude | Provider::Zai => vec!["".to_string(), "".to_string()],
+        Provider::Hyper => vec![],
         Provider::Gemini => vec![
             "Google".into(),
             "Google".into(),
@@ -434,6 +513,7 @@ fn placeholder_labels(provider: Provider) -> Vec<String> {
 fn placeholder_kinds(provider: Provider) -> Vec<WindowKind> {
     match provider {
         Provider::Claude | Provider::Zai => vec![WindowKind::FiveHours, WindowKind::SevenDays],
+        Provider::Hyper => vec![],
         Provider::Gemini => vec![
             WindowKind::FiveHours,
             WindowKind::SevenDays,
@@ -471,6 +551,14 @@ fn fmt_count(n: u64) -> String {
         format!("{:.0}k", n as f64 / 1000.0)
     } else {
         n.to_string()
+    }
+}
+
+fn fmt_balance(b: f64) -> String {
+    if (b - b.round()).abs() < f64::EPSILON {
+        format!("{}", b.round() as u64)
+    } else {
+        format!("{:.1}", b)
     }
 }
 
@@ -534,6 +622,65 @@ mod tests {
     fn window_kind_str_matches_spec_format() {
         assert_eq!(window_kind_str(WindowKind::FiveHours), "5h");
         assert_eq!(window_kind_str(WindowKind::SevenDays), "7d");
+    }
+
+    fn credits_state(balance: Option<f64>, last_error: Option<String>) -> CreditsState {
+        CreditsState {
+            label: "Hyper".into(),
+            balance,
+            last_updated: None,
+            last_error,
+        }
+    }
+
+    #[test]
+    fn fmt_balance_drops_trailing_zero_and_keeps_one_decimal() {
+        assert_eq!(fmt_balance(100.0), "100");
+        assert_eq!(fmt_balance(42.5), "42.5");
+    }
+
+    #[test]
+    fn credits_line_shows_spent_pct_and_balance() {
+        let p = Theme::Default.palette();
+        let line = build_credits_line(&credits_state(Some(30.0), None), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(" 70%"), "text was: {text}");
+        assert!(text.contains("bal 30"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_above_free_allowance_is_zero_spent() {
+        let p = Theme::Default.palette();
+        let line = build_credits_line(&credits_state(Some(250.0), None), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("  0%"), "text was: {text}");
+        assert!(text.contains("bal 250"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_formats_fractional_balance() {
+        let p = Theme::Default.palette();
+        let line = build_credits_line(&credits_state(Some(42.5), None), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(" 58%"), "text was: {text}");
+        assert!(text.contains("bal 42.5"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_cached_shows_warn_and_cached_suffix() {
+        let p = Theme::Default.palette();
+        let line = build_credits_line(&credits_state(Some(10.0), Some("boom".into())), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(WARN), "text was: {text}");
+        assert!(text.contains("(cached)"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_without_balance_shows_loading() {
+        let p = Theme::Default.palette();
+        let line = build_credits_line(&credits_state(None, None), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("Loading credits"), "text was: {text}");
     }
 
     #[test]

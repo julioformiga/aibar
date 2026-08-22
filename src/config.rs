@@ -13,6 +13,9 @@ pub const CLAUDE_API_RATE_LIMITS_URL: &str =
     "https://api.anthropic.com/v1/organizations/rate_limits";
 pub const CLAUDE_API_VERSION: &str = "2023-06-01";
 
+pub const HYPER_CREDITS_URL: &str = "https://hyper.charm.land/v1/credits";
+pub const HYPER_FREE_CREDITS: f64 = 100.0;
+
 pub const COLOR_LOW_THRESHOLD: f32 = 70.0;
 pub const COLOR_HIGH_THRESHOLD: f32 = 90.0;
 
