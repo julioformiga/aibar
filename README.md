@@ -94,7 +94,7 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 
 | Variable              | Default | Description                     |
 |------------------------|---------|----------------------------------|
-| `AIBAR_POLL_SECS`      | `300`   | Background polling interval (seconds) |
+| `AIBAR_POLL_SECS`      | `120`   | Background polling interval (seconds) |
 | `AIBAR_COOLDOWN_SECS`  | `30`    | Cooldown for manual refresh (`r`) |
 | `AIBAR_LOG`            | `warn`  | `tracing` log level              |
 

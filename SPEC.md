@@ -419,7 +419,7 @@ A TUI em si tem regras para não abusar das APIs monitoradas:
 
 | Regra                 | Valor / Comportário                                       |
 |-----------------------|------------------------------------------------------------|
-| Polling automático    | A cada **5 minutos** (`AIBAR_POLL_SECS`)                   |
+| Polling automático    | A cada **2 minutos** (`AIBAR_POLL_SECS`)                   |
 | Cooldown de refresh   | A tecla `r` só dispara nova requisição se a última foi há  |
 |                       | mais de **30 segundos** (`AIBAR_COOLDOWN_SECS`); caso      |
 |                       | contrário, exibe "Wait Ns to refresh"                      |
@@ -772,7 +772,7 @@ Cada fonte (`SourceSlot`) tem sua própria task `tokio` que roda
 
 ```rust
 // Pseudocódigo — uma task por fonte (agent).
-let mut interval = poll_interval(); // 5 min
+let mut interval = poll_interval(); // 2 min
 loop {
     // Fetch com timeout de 15s
     let result = tokio::time::timeout(http_timeout(), agent.fetch()).await;
@@ -928,7 +928,7 @@ Opcionais:
 
 | Variável             | Default   | Descrição                          |
 |----------------------|-----------|------------------------------------|
-| `AIBAR_POLL_SECS`    | `300`     | Intervalo de polling (segundos)    |
+| `AIBAR_POLL_SECS`    | `120`     | Intervalo de polling (segundos)    |
 | `AIBAR_COOLDOWN_SECS`| `30`      | Cooldown do refresh manual         |
 | `AIBAR_LOG`          | `warn`    | Nível de log do `tracing`          |
 

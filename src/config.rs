@@ -2,7 +2,7 @@ use ratatui::style::Color;
 use std::env;
 use std::time::Duration;
 
-pub const POLL_INTERVAL_SECS: u64 = 300;
+pub const POLL_INTERVAL_SECS: u64 = 120;
 pub const COOLDOWN_SECS: u64 = 30;
 pub const HTTP_TIMEOUT_SECS: u64 = 15;
 pub const MAX_BACKOFF_SECS: u64 = 1200;
