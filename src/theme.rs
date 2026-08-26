@@ -43,6 +43,16 @@ impl Theme {
             Theme::Btop => btop_palette(),
         }
     }
+
+    pub fn for_provider(label: &str) -> Self {
+        match label {
+            "Claude" => Theme::Default,
+            "Z.ai" => Theme::Crush,
+            "Hyper" => Theme::Crush,
+            "Gemini" => Theme::Btop,
+            _ => Theme::Default,
+        }
+    }
 }
 
 pub struct Palette {

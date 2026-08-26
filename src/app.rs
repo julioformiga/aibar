@@ -185,9 +185,11 @@ impl AppState {
         }
         self.active_tab = idx;
         if let Some(tab) = self.tabs.get(idx) {
+            let theme = Theme::for_provider(tab.provider.label());
             for slot in &tab.sources {
                 let _ = slot.poll_tx.try_send(PollCommand::Resume);
             }
+            self.set_theme(theme);
         }
     }
 
@@ -247,6 +249,7 @@ impl AppState {
                 slot.state = state;
                 if pct_changed && self.watch_mode {
                     self.switch_tab(tab_idx);
+                    self.set_theme(Theme::for_provider(provider.label()));
                 }
             }
         }
