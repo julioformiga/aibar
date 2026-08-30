@@ -60,7 +60,12 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
 
     let (app_tx, mut app_rx) = mpsc::channel::<AppMsg>(64);
 
-    let (tabs, initial_tab) = build_tabs(detected, &cached, app_tx.clone());
+    let (tabs, initial_tab) = build_tabs(
+        detected,
+        &cached,
+        app_tx.clone(),
+        AppState::DEFAULT_WATCH_MODE,
+    );
     let mut app = AppState::new(tabs);
     app.active_tab = initial_tab;
     app.theme = cached.theme;
@@ -107,6 +112,7 @@ fn build_tabs(
     agents: Vec<Box<dyn Agent>>,
     cached: &CachedState,
     app_tx: mpsc::Sender<AppMsg>,
+    watch_mode: bool,
 ) -> (Vec<Tab>, usize) {
     let mut tabs_map: Vec<(Provider, Vec<Box<dyn Agent>>)> = Vec::new();
     for agent in agents {
@@ -122,7 +128,9 @@ fn build_tabs(
 
     let mut tabs = Vec::new();
     for (i, (provider, group)) in tabs_map.into_iter().enumerate() {
-        let start_paused = i != active_tab_idx;
+        // In watch mode every source polls in the background from the start;
+        // otherwise only the active tab's sources poll.
+        let start_paused = !watch_mode && i != active_tab_idx;
         let active = cached
             .active_sources
             .get(provider.label())
@@ -336,4 +344,120 @@ fn init_tracing() {
         }
     }
     builder.with_writer(std::io::stderr).init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ProviderState, SourceState};
+    use async_trait::async_trait;
+
+    struct MockAgent {
+        provider: Provider,
+        source_id: String,
+    }
+
+    impl MockAgent {
+        fn new(provider: Provider, source_id: &str) -> Self {
+            Self {
+                provider,
+                source_id: source_id.to_string(),
+            }
+        }
+
+        fn state(&self) -> SourceState {
+            SourceState::Quota(ProviderState {
+                provider: self.provider,
+                label: self.source_id.clone(),
+                windows: vec![],
+                last_updated: None,
+                last_error: None,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Agent for MockAgent {
+        fn provider(&self) -> Provider {
+            self.provider
+        }
+
+        fn source_id(&self) -> &str {
+            &self.source_id
+        }
+
+        fn initial_state(&self) -> SourceState {
+            self.state()
+        }
+
+        async fn fetch(&self) -> anyhow::Result<SourceState> {
+            Ok(self.state())
+        }
+    }
+
+    fn mock_agents() -> Vec<Box<dyn Agent>> {
+        vec![
+            Box::new(MockAgent::new(Provider::Zai, "zai-default")),
+            Box::new(MockAgent::new(Provider::Claude, "claude-oauth")),
+        ]
+    }
+
+    #[tokio::test]
+    async fn build_tabs_polls_background_tabs_when_watch_mode_on() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let (tabs, active) = build_tabs(mock_agents(), &CachedState::default(), tx, true);
+        assert_eq!(active, 0);
+
+        // The inactive Claude tab must poll immediately in watch mode; the
+        // first Update from it proves its poller did not start paused.
+        let deadline = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match rx.recv().await {
+                    Some(AppMsg::Update {
+                        provider: Provider::Claude,
+                        ..
+                    }) => return,
+                    Some(_) => continue,
+                    None => panic!("channel closed before background update"),
+                }
+            }
+        });
+        deadline.await.expect("background tab never sent an update");
+        drop(tabs);
+    }
+
+    #[tokio::test]
+    async fn build_tabs_pauses_background_tabs_when_watch_mode_off() {
+        let (tx, mut rx) = mpsc::channel(16);
+        let (tabs, active) = build_tabs(mock_agents(), &CachedState::default(), tx, false);
+        assert_eq!(active, 0);
+
+        // The active tab reports Update + Scheduled; the paused Claude tab
+        // must stay silent for the whole drain window.
+        let mut saw_active_update = false;
+        let drain = tokio::time::timeout(Duration::from_millis(300), async {
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    AppMsg::Update {
+                        provider: Provider::Claude,
+                        ..
+                    }
+                    | AppMsg::Error {
+                        provider: Provider::Claude,
+                        ..
+                    }
+                    | AppMsg::Scheduled {
+                        provider: Provider::Claude,
+                        ..
+                    } => panic!("paused background tab sent a message"),
+                    AppMsg::Update { .. } => saw_active_update = true,
+                    _ => {}
+                }
+            }
+        })
+        .await;
+        assert!(drain.is_err(), "rx should still be open after drain window");
+        assert!(saw_active_update, "active tab never reported");
+        drop(tabs);
+    }
 }

@@ -79,6 +79,10 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Initial watch mode; shared with `build_tabs` so background pollers
+    /// start unpaused when watch mode is on.
+    pub const DEFAULT_WATCH_MODE: bool = true;
+
     pub fn new(tabs: Vec<Tab>) -> Self {
         Self {
             tabs,
@@ -86,7 +90,7 @@ impl AppState {
             last_refresh: None,
             status_message: None,
             theme: Theme::default(),
-            watch_mode: true,
+            watch_mode: Self::DEFAULT_WATCH_MODE,
         }
     }
 
