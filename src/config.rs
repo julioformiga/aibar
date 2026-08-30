@@ -35,6 +35,17 @@ pub fn max_backoff() -> Duration {
     Duration::from_secs(MAX_BACKOFF_SECS)
 }
 
+/// Mouse capture is on by default; set `AIBAR_NO_MOUSE=1` to keep the
+/// terminal's native text selection instead of routing events to the TUI.
+pub fn mouse_enabled() -> bool {
+    !env::var("AIBAR_NO_MOUSE")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            !(v.is_empty() || v == "0" || v == "false" || v == "no")
+        })
+        .unwrap_or(false)
+}
+
 fn env_secs(name: &str, default: u64) -> u64 {
     env::var(name)
         .ok()
@@ -79,6 +90,26 @@ mod tests {
     fn http_timeout_and_max_backoff_are_fixed() {
         assert_eq!(http_timeout(), Duration::from_secs(HTTP_TIMEOUT_SECS));
         assert_eq!(max_backoff(), Duration::from_secs(MAX_BACKOFF_SECS));
+    }
+
+    #[test]
+    fn mouse_enabled_defaults_on_and_honors_kill_switch() {
+        let _guard = env_var_test_lock().lock().unwrap();
+
+        env::remove_var("AIBAR_NO_MOUSE");
+        assert!(mouse_enabled());
+
+        for off in ["1", "true", "yes", "any-value"] {
+            env::set_var("AIBAR_NO_MOUSE", off);
+            assert!(!mouse_enabled(), "{off} should disable mouse");
+        }
+
+        for on in ["", "0", "false", "no"] {
+            env::set_var("AIBAR_NO_MOUSE", on);
+            assert!(mouse_enabled(), "{on} should keep mouse on");
+        }
+
+        env::remove_var("AIBAR_NO_MOUSE");
     }
 
     #[test]

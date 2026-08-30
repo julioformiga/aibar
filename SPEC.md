@@ -411,6 +411,26 @@ sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 | `w`             | Toggle watch mode (auto-switch ao mudar uso)      |
 | `q` / `Ctrl+C`  | Quit                                              |
 
+### 4.12 Mouse
+
+Captura de mouse habilitada por padrão (`EnableMouseCapture` no setup,
+`DisableMouseCapture` no teardown). Desativar com `AIBAR_NO_MOUSE=1`
+(qualquer valor exceto vazio/`0`/`false`/`no` desativa), devolvendo ao
+terminal a seleção nativa de texto.
+
+| Ação                        | Efeito                                                    |
+|-----------------------------|-----------------------------------------------------------|
+| Clique numa aba (linha de título) | Troca para a aba; clicar na aba já ativa cicla as fontes (igual a `Enter`) |
+| Clique numa ação do rodapé  | Dispara a ação — zona de clique cobre tecla + rótulo completo (`W Watch (on)`, `R Refresh`, `↑↓ Theme` cicla o tema, `Q Quit`, `Enter Source` quando há múltiplas fontes) |
+| Scroll sobre o título       | Roda para cima = aba anterior; para baixo = próxima (igual a `←`/`→`) |
+
+Hit-testing (`ui::hit_test`): o título e o rodapé renderizam dentro da
+borda (colunas 1 até `width-2`), então as faixas clicáveis são calculadas
+pelos mesmos spans do desenho (`breadcrumb_parts` / `hint_parts`, que
+retornam a `Line` e as faixas de colunas juntos, garantindo que desenho e
+hit-test nunca divergem). Cliques fora dessas duas linhas, ou fora das
+faixas, são ignorados.
+
 ---
 
 ## 5. Regras de Rate Limit da TUI
@@ -930,6 +950,7 @@ Opcionais:
 |----------------------|-----------|------------------------------------|
 | `AIBAR_POLL_SECS`    | `120`     | Intervalo de polling (segundos)    |
 | `AIBAR_COOLDOWN_SECS`| `30`      | Cooldown do refresh manual         |
+| `AIBAR_NO_MOUSE`     | unset     | `1` desativa a captura de mouse    |
 | `AIBAR_LOG`          | `warn`    | Nível de log do `tracing`          |
 
 **Fallbacks de credenciais (sem env var):**

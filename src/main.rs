@@ -9,15 +9,19 @@ mod ui;
 use crate::agents::{detect_agents, Agent};
 use crate::app::{Action, AppMsg, AppState, PollCommand, SourceSlot, Tab};
 use crate::cache::{Cache, CachedSource, CachedState};
-use crate::config::{http_timeout, max_backoff, poll_interval};
+use crate::config::{http_timeout, max_backoff, mouse_enabled, poll_interval};
 use crate::model::Provider;
 use crossterm::{
-    event::{Event, EventStream},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use directories::BaseDirs;
 use futures::StreamExt;
+use ratatui::layout::Rect;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use std::time::Duration;
@@ -49,8 +53,8 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
         loop {
             terminal.draw(|f| ui::draw(f, &app))?;
             let mut events = EventStream::new();
-            if let Some(Ok(Event::Key(key))) = events.next().await {
-                if matches!(app.handle_input(key), Some(Action::Quit)) {
+            if let Some(Ok(ev)) = events.next().await {
+                if let Some(Action::Quit) = handle_event(&mut app, terminal, ev) {
                     break;
                 }
             }
@@ -78,8 +82,8 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
 
         tokio::select! {
             maybe_ev = events.next() => {
-                if let Some(Ok(Event::Key(key))) = maybe_ev {
-                    if matches!(app.handle_input(key), Some(Action::Quit)) {
+                if let Some(Ok(ev)) = maybe_ev {
+                    if let Some(Action::Quit) = handle_event(&mut app, terminal, ev) {
                         break;
                     }
                     save_cache(&cache, &app);
@@ -106,6 +110,37 @@ async fn run_async(terminal: &mut Tui) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Dispatches a terminal event: key presses go to `handle_input`, mouse
+/// events to hit-testing against the rendered layout. Returns `Quit` when
+/// the app should exit. `None` means nothing (or a non-exiting action)
+/// happened.
+fn handle_event(app: &mut AppState, terminal: &Tui, ev: Event) -> Option<Action> {
+    match ev {
+        Event::Key(key) => app.handle_input(key),
+        Event::Mouse(me) => handle_mouse(app, terminal, me),
+        _ => None,
+    }
+}
+
+fn handle_mouse(app: &mut AppState, terminal: &Tui, me: MouseEvent) -> Option<Action> {
+    let area: Rect = terminal.size().ok()?.into();
+    match me.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let target = ui::hit_test(app, area, me.column, me.row)?;
+            app.handle_click(target)
+        }
+        MouseEventKind::ScrollUp if me.row == 0 => {
+            app.scroll_tabs(true);
+            None
+        }
+        MouseEventKind::ScrollDown if me.row == 0 => {
+            app.scroll_tabs(false);
+            None
+        }
+        _ => None,
+    }
 }
 
 fn build_tabs(
@@ -317,14 +352,22 @@ fn setup_terminal() -> io::Result<Tui> {
     }));
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    if mouse_enabled() {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
     let backend = CrosstermBackend::new(stdout);
     Terminal::new(backend)
 }
 
 fn restore_terminal() -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(io::stdout(), LeaveAlternateScreen)?;
+    if mouse_enabled() {
+        execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    } else {
+        execute!(io::stdout(), LeaveAlternateScreen)?;
+    }
     Ok(())
 }
 

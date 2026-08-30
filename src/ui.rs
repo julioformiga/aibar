@@ -1,4 +1,4 @@
-use crate::app::AppState;
+use crate::app::{AppState, ClickTarget, FooterAction};
 use crate::config::HYPER_FREE_CREDITS;
 use crate::model::{CreditsState, LimitScope, LimitWindow, Provider, SourceState, WindowKind};
 use crate::theme::Palette;
@@ -8,6 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use ratatui::Frame;
+use std::ops::Range;
 use std::time::Instant;
 
 const TIME_W: usize = 9;
@@ -62,23 +63,41 @@ pub fn draw(f: &mut Frame, app: &AppState) {
 }
 
 fn breadcrumb_title(app: &AppState, p: &Palette) -> Line<'static> {
+    breadcrumb_parts(app, p).0
+}
+
+/// Builds the top-breadcrumb line alongside the column range (in line-local
+/// coordinates) each tab label occupies, so drawing and mouse hit-testing
+/// can never drift apart. A tab range covers " <label> " including padding.
+fn breadcrumb_parts(app: &AppState, p: &Palette) -> (Line<'static>, Vec<(usize, Range<usize>)>) {
     let mut spans = vec![Span::styled(" AIBar ", p.title)];
+    let mut targets = Vec::new();
+    let mut x = spans[0].width();
     for (i, tab) in app.tabs.iter().enumerate() {
         spans.push(tab_separator(p));
+        x += 1;
+        let start = x;
         spans.push(Span::raw(" "));
+        x += 1;
         let label = tab
             .active_state()
             .map(|s| s.label().to_string())
             .unwrap_or_else(|| tab.provider.label().to_string());
         if i == app.active_tab {
-            spans.push(Span::styled(label, p.tab_active));
+            let span = Span::styled(label, p.tab_active);
+            x += span.width();
+            spans.push(span);
         } else {
-            spans.push(Span::styled(label, p.tab_inactive));
+            let span = Span::styled(label, p.tab_inactive);
+            x += span.width();
+            spans.push(span);
         }
         spans.push(Span::raw(" "));
+        x += 1;
+        targets.push((i, start..x));
     }
     spans.push(Span::raw(" "));
-    Line::from(spans)
+    (Line::from(spans), targets)
 }
 
 fn tab_separator(p: &Palette) -> Span<'static> {
@@ -113,38 +132,138 @@ fn hint_text(p: &Palette, text: &str) -> Span<'static> {
 }
 
 fn build_hint_line(has_multi: bool, watch_mode: bool, p: &Palette) -> Line<'static> {
+    hint_parts(has_multi, watch_mode, p).0
+}
+
+/// Builds the right-aligned footer hint line alongside the column range (in
+/// line-local coordinates) each clickable action occupies, covering the key
+/// plus its full label text (e.g. "W Watch (on)").
+fn hint_parts(
+    has_multi: bool,
+    watch_mode: bool,
+    p: &Palette,
+) -> (Line<'static>, Vec<(FooterAction, Range<usize>)>) {
     let bold = p.hint_key;
     let sep = "  ";
 
-    let mut spans = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut targets = Vec::new();
+    let mut x = 0usize;
+
     if has_multi {
-        spans.extend_from_slice(&[
-            Span::styled("E", bold),
-            hint_text(p, "nter Source"),
-            Span::raw(sep),
-        ]);
+        push_hint_group(
+            &mut spans,
+            &mut x,
+            &mut targets,
+            FooterAction::CycleSource,
+            vec![Span::styled("E", bold), hint_text(p, "nter Source")],
+        );
+        spans.push(Span::raw(sep));
+        x += sep.len();
     }
     let watch_state = if watch_mode {
         Span::styled("(on)", bold)
     } else {
         hint_text(p, "(off)")
     };
-    spans.extend_from_slice(&[
-        Span::styled("\u{2191}\u{2193}", bold),
-        hint_text(p, " Theme"),
-        Span::raw(sep),
-        Span::styled("W", bold),
-        hint_text(p, "atch "),
-        watch_state,
-        Span::raw(sep),
-        Span::styled("R", bold),
-        hint_text(p, "efresh"),
-        Span::raw(sep),
-        Span::styled("Q", bold),
-        hint_text(p, "uit"),
-    ]);
+    push_hint_group(
+        &mut spans,
+        &mut x,
+        &mut targets,
+        FooterAction::CycleTheme,
+        vec![
+            Span::styled("\u{2191}\u{2193}", bold),
+            hint_text(p, " Theme"),
+        ],
+    );
+    spans.push(Span::raw(sep));
+    x += sep.len();
+    push_hint_group(
+        &mut spans,
+        &mut x,
+        &mut targets,
+        FooterAction::ToggleWatch,
+        vec![Span::styled("W", bold), hint_text(p, "atch "), watch_state],
+    );
+    spans.push(Span::raw(sep));
+    x += sep.len();
+    push_hint_group(
+        &mut spans,
+        &mut x,
+        &mut targets,
+        FooterAction::Refresh,
+        vec![Span::styled("R", bold), hint_text(p, "efresh")],
+    );
+    spans.push(Span::raw(sep));
+    x += sep.len();
+    push_hint_group(
+        &mut spans,
+        &mut x,
+        &mut targets,
+        FooterAction::Quit,
+        vec![Span::styled("Q", bold), hint_text(p, "uit")],
+    );
 
-    Line::from(spans)
+    (Line::from(spans), targets)
+}
+
+fn push_hint_group(
+    spans: &mut Vec<Span<'static>>,
+    x: &mut usize,
+    targets: &mut Vec<(FooterAction, Range<usize>)>,
+    action: FooterAction,
+    parts: Vec<Span<'static>>,
+) {
+    let start = *x;
+    for part in parts {
+        *x += part.width();
+        spans.push(part);
+    }
+    targets.push((action, start..*x));
+}
+
+/// Maps a click at `col`/`row` (terminal coordinates) to the tab it lands on
+/// (top border row) or the footer action it lands on (bottom border row).
+/// Returns `None` for anything outside those two rows or outside every range.
+pub fn hit_test(app: &AppState, area: Rect, col: u16, row: u16) -> Option<ClickTarget> {
+    if app.is_empty() || area.height == 0 || area.width == 0 {
+        return None;
+    }
+    let palette = app.theme.palette();
+    let col = col as usize;
+
+    if row == 0 {
+        if col == 0 {
+            return None;
+        }
+        let (_, tabs) = breadcrumb_parts(app, &palette);
+        let col = col - 1;
+        return tabs
+            .iter()
+            .find(|(_, range)| range.contains(&col))
+            .map(|(idx, _)| ClickTarget::Tab(*idx));
+    }
+
+    if row == area.height - 1 {
+        let has_multi = app
+            .tabs
+            .get(app.active_tab)
+            .map(|t| t.sources.len() > 1)
+            .unwrap_or(false);
+        let (line, actions) = hint_parts(has_multi, app.watch_mode, &palette);
+        let inner = (area.width as usize).saturating_sub(2);
+        let start = 1 + inner.saturating_sub(line.width());
+        if col < start {
+            return None;
+        }
+        let col = col - start;
+        return actions
+            .iter()
+            .find(|(_, range)| range.contains(&col))
+            .map(|(action, _)| ClickTarget::Footer(*action));
+    }
+
+    None
 }
 
 fn build_timer_line(app: &AppState, p: &Palette) -> Option<Line<'static>> {
@@ -845,5 +964,106 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn hit_test_matches_rendered_layout() {
+        use crate::app::{AppState, ClickTarget, FooterAction, SourceSlot, Tab};
+        use crate::model::ProviderState;
+        use ratatui::backend::TestBackend;
+        use ratatui::layout::Rect;
+        use ratatui::Terminal;
+        use tokio::sync::mpsc;
+
+        let make_slot = |provider: Provider, id: &str| -> SourceSlot {
+            let (tx, _rx) = mpsc::channel(4);
+            SourceSlot {
+                id: id.into(),
+                state: SourceState::Quota(ProviderState {
+                    provider,
+                    label: provider.label().to_string(),
+                    windows: vec![],
+                    last_updated: None,
+                    last_error: None,
+                }),
+                poll_tx: tx,
+                last_poll_at: None,
+                next_poll_at: None,
+            }
+        };
+        let claude = Tab {
+            provider: Provider::Claude,
+            sources: vec![
+                make_slot(Provider::Claude, "oauth"),
+                make_slot(Provider::Claude, "api"),
+            ],
+            active: 0,
+        };
+        let zai = Tab {
+            provider: Provider::Zai,
+            sources: vec![make_slot(Provider::Zai, "default")],
+            active: 0,
+        };
+        let app = AppState::new(vec![claude, zai]);
+
+        let backend = TestBackend::new(100, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+
+        let area = Rect::new(0, 0, 100, 10);
+        let row = |y: u16| -> String {
+            let buf = terminal.backend().buffer();
+            (0..100usize)
+                .map(|x| buf[(x as u16, y)].symbol().to_string())
+                .collect()
+        };
+        let top = row(0);
+        let bottom = row(9);
+        let click = |col: usize, r: u16| hit_test(&app, area, col as u16, r);
+        // Every rendered cell is one column wide, but box glyphs are
+        // multi-byte, so search by char index (== screen column), not bytes.
+        let find_col = |hay: &str, needle: &str| -> usize {
+            let hay: Vec<char> = hay.chars().collect();
+            let needle: Vec<char> = needle.chars().collect();
+            (0..=hay.len().saturating_sub(needle.len()))
+                .find(|&i| hay[i..i + needle.len()] == needle[..])
+                .unwrap()
+        };
+
+        let col = find_col(&top, "Claude");
+        assert_eq!(click(col, 0), Some(ClickTarget::Tab(0)));
+        let col = find_col(&top, "Z.ai");
+        assert_eq!(click(col, 0), Some(ClickTarget::Tab(1)));
+
+        // Non-tab regions of the title row are not clickable.
+        assert_eq!(click(find_col(&top, "AIBar"), 0), None);
+        assert_eq!(click(find_col(&top, "\u{2502}"), 0), None);
+
+        let col = find_col(&bottom, "Source");
+        assert_eq!(
+            click(col, 9),
+            Some(ClickTarget::Footer(FooterAction::CycleSource))
+        );
+        let col = find_col(&bottom, "Theme");
+        assert_eq!(
+            click(col, 9),
+            Some(ClickTarget::Footer(FooterAction::CycleTheme))
+        );
+        let col = find_col(&bottom, "Watch");
+        assert_eq!(
+            click(col, 9),
+            Some(ClickTarget::Footer(FooterAction::ToggleWatch))
+        );
+        let col = find_col(&bottom, "Refresh");
+        assert_eq!(
+            click(col, 9),
+            Some(ClickTarget::Footer(FooterAction::Refresh))
+        );
+        let col = find_col(&bottom, "Quit");
+        assert_eq!(click(col, 9), Some(ClickTarget::Footer(FooterAction::Quit)));
+
+        // Status area on the bottom row and content rows are inert.
+        assert_eq!(click(0, 9), None);
+        assert_eq!(click(50, 5), None);
     }
 }

@@ -74,6 +74,19 @@ Fallbacks without an env var:
 | `w`                 | Toggle watch mode (auto-switch on change) |
 | `q` / `Ctrl+C`      | Quit                                     |
 
+### Mouse
+
+Mouse support is on by default:
+
+- **Click a provider tab** (top bar) to switch to it; clicking the active
+  tab cycles its sources (same as `Enter`).
+- **Click a footer action** (key + label, e.g. `W Watch (on)`, `R Refresh`,
+  `Q Quit`) to trigger it.
+- **Scroll on the top bar** to move to the previous/next tab.
+
+Set `AIBAR_NO_MOUSE=1` to disable mouse capture (restores the terminal's
+native click-drag text selection).
+
 ### Themes
 
 Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
@@ -96,6 +109,7 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 |------------------------|---------|----------------------------------|
 | `AIBAR_POLL_SECS`      | `120`   | Background polling interval (seconds) |
 | `AIBAR_COOLDOWN_SECS`  | `30`    | Cooldown for manual refresh (`r`) |
+| `AIBAR_NO_MOUSE`       | unset   | Set to `1` to disable mouse capture |
 | `AIBAR_LOG`            | `warn`  | `tracing` log level              |
 
 Logs are written to `~/.cache/aibar/aibar.log`.

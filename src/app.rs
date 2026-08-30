@@ -8,6 +8,23 @@ pub enum Action {
     Quit,
 }
 
+/// A clickable region of the footer hint line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FooterAction {
+    CycleSource,
+    CycleTheme,
+    ToggleWatch,
+    Refresh,
+    Quit,
+}
+
+/// Where a mouse click landed, resolved against the rendered layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickTarget {
+    Tab(usize),
+    Footer(FooterAction),
+}
+
 pub enum RefreshResult {
     Triggered,
     #[allow(dead_code)]
@@ -122,10 +139,7 @@ impl AppState {
                 None
             }
             KeyCode::Enter => {
-                if let Some(tab) = self.tabs.get_mut(self.active_tab) {
-                    tab.cycle_source();
-                }
-                self.status_message = None;
+                self.cycle_active_source();
                 None
             }
             KeyCode::Tab | KeyCode::Right => {
@@ -150,6 +164,54 @@ impl AppState {
             }
             _ => None,
         }
+    }
+
+    pub fn handle_click(&mut self, target: ClickTarget) -> Option<Action> {
+        match target {
+            ClickTarget::Tab(idx) if idx != self.active_tab => {
+                self.switch_tab(idx);
+                None
+            }
+            // Clicking the already-active tab cycles its sources, like Enter.
+            ClickTarget::Tab(_) => {
+                self.cycle_active_source();
+                None
+            }
+            ClickTarget::Footer(FooterAction::CycleSource) => {
+                self.cycle_active_source();
+                None
+            }
+            ClickTarget::Footer(FooterAction::CycleTheme) => {
+                self.set_theme(self.theme.next());
+                None
+            }
+            ClickTarget::Footer(FooterAction::ToggleWatch) => {
+                self.toggle_watch_mode();
+                None
+            }
+            ClickTarget::Footer(FooterAction::Refresh) => {
+                self.request_refresh();
+                None
+            }
+            ClickTarget::Footer(FooterAction::Quit) => Some(Action::Quit),
+        }
+    }
+
+    /// Mouse wheel over the title row: scroll up = previous tab,
+    /// scroll down = next tab (same as Left/Right).
+    pub fn scroll_tabs(&mut self, up: bool) {
+        if up {
+            self.prev_tab();
+        } else {
+            self.next_tab();
+        }
+    }
+
+    fn cycle_active_source(&mut self) {
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            tab.cycle_source();
+        }
+        self.status_message = None;
     }
 
     pub fn set_theme(&mut self, theme: Theme) {
@@ -393,6 +455,72 @@ mod tests {
         assert!(app
             .handle_input(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE))
             .is_none());
+    }
+
+    #[test]
+    fn click_on_inactive_tab_switches() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+        ]);
+        assert!(app.handle_click(ClickTarget::Tab(1)).is_none());
+        assert_eq!(app.active_tab, 1);
+    }
+
+    #[test]
+    fn click_on_active_tab_cycles_sources() {
+        let mut app = AppState::new(vec![make_tab(Provider::Claude, &["oauth", "api-key"])]);
+        assert!(app.handle_click(ClickTarget::Tab(0)).is_none());
+        assert_eq!(app.tabs[0].active, 1);
+    }
+
+    #[test]
+    fn footer_clicks_map_to_actions() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth", "api-key"]),
+            make_tab(Provider::Zai, &["default"]),
+        ]);
+        let theme_before = app.theme;
+        assert!(app
+            .handle_click(ClickTarget::Footer(FooterAction::CycleSource))
+            .is_none());
+        assert_eq!(app.tabs[0].active, 1);
+
+        assert!(app
+            .handle_click(ClickTarget::Footer(FooterAction::CycleTheme))
+            .is_none());
+        assert_ne!(app.theme, theme_before);
+
+        assert!(app
+            .handle_click(ClickTarget::Footer(FooterAction::ToggleWatch))
+            .is_none());
+        assert!(!app.watch_mode);
+
+        assert!(app
+            .handle_click(ClickTarget::Footer(FooterAction::Refresh))
+            .is_none());
+
+        assert!(matches!(
+            app.handle_click(ClickTarget::Footer(FooterAction::Quit)),
+            Some(Action::Quit)
+        ));
+    }
+
+    #[test]
+    fn scroll_tabs_moves_and_wraps() {
+        let mut app = AppState::new(vec![
+            make_tab(Provider::Claude, &["oauth"]),
+            make_tab(Provider::Zai, &["default"]),
+            make_tab(Provider::Gemini, &["default"]),
+        ]);
+        app.scroll_tabs(false);
+        assert_eq!(app.active_tab, 1);
+        app.scroll_tabs(false);
+        assert_eq!(app.active_tab, 2);
+        app.scroll_tabs(false);
+        assert_eq!(app.active_tab, 0);
+        app.scroll_tabs(true);
+        assert_eq!(app.active_tab, 2);
     }
 
     #[test]
