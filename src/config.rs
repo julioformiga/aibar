@@ -1,3 +1,4 @@
+use crate::model::HyperPlan;
 use ratatui::style::Color;
 use std::env;
 use std::time::Duration;
@@ -15,6 +16,7 @@ pub const CLAUDE_API_VERSION: &str = "2023-06-01";
 
 pub const HYPER_CREDITS_URL: &str = "https://hyper.charm.land/v1/credits";
 pub const HYPER_FREE_CREDITS: f64 = 100.0;
+pub const HYPER_MONTHLY_CREDITS: f64 = 250.0;
 
 pub const COLOR_LOW_THRESHOLD: f32 = 70.0;
 pub const COLOR_HIGH_THRESHOLD: f32 = 90.0;
@@ -51,6 +53,18 @@ fn env_secs(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
+}
+
+/// Override manual do plano do Hyper (`AIBAR_HYPER_PLAN=free|monthly`).
+/// Ausente ou inválido ⇒ `None` (auto-detecção pelo saldo; ver
+/// `CreditsState::resolved_plan`).
+pub fn hyper_plan_override() -> Option<HyperPlan> {
+    let value = env::var("AIBAR_HYPER_PLAN").ok()?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "free" => Some(HyperPlan::Free),
+        "monthly" => Some(HyperPlan::Monthly),
+        _ => None,
+    }
 }
 
 pub fn color_for_percentage(pct: f32) -> Color {
@@ -110,6 +124,25 @@ mod tests {
         }
 
         env::remove_var("AIBAR_NO_MOUSE");
+    }
+
+    #[test]
+    fn hyper_plan_override_parses_values_and_ignores_garbage() {
+        let _guard = env_var_test_lock().lock().unwrap();
+
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+        assert_eq!(hyper_plan_override(), None);
+
+        std::env::set_var("AIBAR_HYPER_PLAN", " Monthly ");
+        assert_eq!(hyper_plan_override(), Some(HyperPlan::Monthly));
+
+        std::env::set_var("AIBAR_HYPER_PLAN", "free");
+        assert_eq!(hyper_plan_override(), Some(HyperPlan::Free));
+
+        std::env::set_var("AIBAR_HYPER_PLAN", "not-a-plan");
+        assert_eq!(hyper_plan_override(), None);
+
+        std::env::remove_var("AIBAR_HYPER_PLAN");
     }
 
     #[test]

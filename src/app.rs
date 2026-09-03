@@ -1,6 +1,7 @@
-use crate::config::cooldown;
-use crate::model::{Provider, SourceState};
+use crate::config::{cooldown, HYPER_FREE_CREDITS};
+use crate::model::{CreditsState, HyperPlan, Provider, SourceState};
 use crate::theme::Theme;
+use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use tokio::sync::mpsc;
 
@@ -304,13 +305,18 @@ impl AppState {
         RefreshResult::Triggered
     }
 
-    pub fn apply_update(&mut self, provider: Provider, source_id: &str, state: SourceState) {
+    pub fn apply_update(&mut self, provider: Provider, source_id: &str, mut state: SourceState) {
         if let Some(tab_idx) = self.tabs.iter().position(|t| t.provider == provider) {
             if let Some(slot) = self.tabs[tab_idx]
                 .sources
                 .iter_mut()
                 .find(|s| s.id == source_id)
             {
+                if let (SourceState::Credits(prev), SourceState::Credits(new)) =
+                    (&slot.state, &mut state)
+                {
+                    fold_credits_update(prev, new);
+                }
                 let pct_changed = slot.state.usage_changed(&state);
                 slot.state = state;
                 if pct_changed && self.watch_mode {
@@ -351,10 +357,31 @@ impl AppState {
     }
 }
 
+/// Preserva entre polls o que o `/v1/credits` não informa: o plano
+/// (saldo acima da mesada gratuita só existe no mensal, então a detecção
+/// fica grudada no estado) e a âncora do countdown — quando o saldo sobe,
+/// o refresh do plano acabou de acontecer, então o próximo fica estimado
+/// para 24h depois.
+fn fold_credits_update(prev: &CreditsState, new: &mut CreditsState) {
+    new.plan = prev.plan;
+    new.reset_at = prev.reset_at;
+    if let Some(balance) = new.balance {
+        if balance > HYPER_FREE_CREDITS {
+            new.plan = Some(HyperPlan::Monthly);
+        }
+        if prev
+            .balance
+            .is_some_and(|prev_balance| balance > prev_balance)
+        {
+            new.reset_at = Some(Utc::now() + chrono::Duration::seconds(86_400));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Provider, ProviderState, SourceState};
+    use crate::model::{CreditsState, HyperPlan, Provider, ProviderState, SourceState};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn make_slot(provider: Provider, id: &str, poll_tx: mpsc::Sender<PollCommand>) -> SourceSlot {
@@ -750,6 +777,84 @@ mod tests {
         // Active tab (Claude) keeps resuming, Z.ai is paused again.
         assert!(matches!(rx0.recv().await, Some(PollCommand::Resume)));
         assert!(matches!(rx1.recv().await, Some(PollCommand::Pause)));
+    }
+
+    #[test]
+    fn apply_update_credits_detects_and_sticks_monthly_plan() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut app = AppState::new(vec![Tab {
+            provider: Provider::Hyper,
+            sources: vec![credits_slot(Some(109.0), tx)],
+            active: 0,
+        }]);
+
+        // Saldo acima da mesada gratuita só existe no plano mensal.
+        app.apply_update(Provider::Hyper, "default", credits_update(250.0));
+        assert_eq!(credits_of(&app).plan, Some(HyperPlan::Monthly));
+
+        // Fim do dia com saldo baixo: detecção continua mensal (sticky).
+        app.apply_update(Provider::Hyper, "default", credits_update(30.0));
+        assert_eq!(credits_of(&app).plan, Some(HyperPlan::Monthly));
+    }
+
+    #[test]
+    fn apply_update_credits_balance_rise_anchors_daily_reset() {
+        let (tx, _rx) = mpsc::channel(4);
+        let mut app = AppState::new(vec![Tab {
+            provider: Provider::Hyper,
+            sources: vec![credits_slot(Some(120.0), tx)],
+            active: 0,
+        }]);
+
+        // Queda de saldo não ancora nada.
+        app.apply_update(Provider::Hyper, "default", credits_update(100.0));
+        assert!(credits_of(&app).reset_at.is_none());
+
+        // Subida ⇒ o refresh diário acabou de acontecer: próximo em ~24h.
+        app.apply_update(Provider::Hyper, "default", credits_update(250.0));
+        let reset_at = credits_of(&app).reset_at.expect("reset anchor");
+        let now = Utc::now();
+        assert!(reset_at > now + chrono::Duration::seconds(86_000));
+        assert!(reset_at <= now + chrono::Duration::seconds(86_400));
+
+        // Queda seguinte preserva a âncora.
+        app.apply_update(Provider::Hyper, "default", credits_update(200.0));
+        assert_eq!(credits_of(&app).reset_at, Some(reset_at));
+    }
+
+    fn credits_slot(balance: Option<f64>, poll_tx: mpsc::Sender<PollCommand>) -> SourceSlot {
+        SourceSlot {
+            id: "default".to_string(),
+            state: SourceState::Credits(CreditsState {
+                label: "Hyper".into(),
+                balance,
+                plan: None,
+                reset_at: None,
+                last_updated: None,
+                last_error: None,
+            }),
+            poll_tx,
+            last_poll_at: None,
+            next_poll_at: None,
+        }
+    }
+
+    fn credits_update(balance: f64) -> SourceState {
+        SourceState::Credits(CreditsState {
+            label: "Hyper".into(),
+            balance: Some(balance),
+            plan: None,
+            reset_at: None,
+            last_updated: None,
+            last_error: None,
+        })
+    }
+
+    fn credits_of(app: &AppState) -> &CreditsState {
+        match &app.tabs[0].sources[0].state {
+            SourceState::Credits(cs) => cs,
+            _ => panic!("expected Credits state"),
+        }
     }
 
     fn quota_state(provider: Provider, used: u64) -> SourceState {

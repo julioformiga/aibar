@@ -56,8 +56,9 @@ impl Cache {
 mod tests {
     use super::*;
     use crate::model::{
-        Ceiling, CeilingReport, CreditsState, LimitWindow, ProviderState, WindowKind,
+        Ceiling, CeilingReport, CreditsState, HyperPlan, LimitWindow, ProviderState, WindowKind,
     };
+    use chrono::Utc;
 
     fn temp_cache_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -176,6 +177,8 @@ mod tests {
                 state: SourceState::Credits(CreditsState {
                     label: "Hyper".into(),
                     balance: Some(42.5),
+                    plan: Some(HyperPlan::Monthly),
+                    reset_at: Some(Utc::now()),
                     last_updated: None,
                     last_error: None,
                 }),
@@ -190,6 +193,8 @@ mod tests {
             SourceState::Credits(cs) => {
                 assert_eq!(cs.label, "Hyper");
                 assert_eq!(cs.balance, Some(42.5));
+                assert_eq!(cs.plan, Some(HyperPlan::Monthly));
+                assert!(cs.reset_at.is_some());
             }
             _ => panic!("expected Credits state"),
         }

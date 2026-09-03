@@ -277,17 +277,37 @@ TPM de entrada em verde, TPM de saída em amarelo.
 
 ```
 ┌ Hyper ─────────────────────────────────────────────━━━━━━┄┄┄┄┄┄┄┄┄┄┄─┐
-│  Credits  [███████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░]  23% bal 77 │
+│  Credits   2h31m [███████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░]  56% bal 109 │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 A API de credits do Hyper (`GET /v1/credits`) retorna apenas o saldo
-(`{"balance": 100}`), não janelas de uso. A barra representa o quanto da
-**mesada gratuita mensal** (`HYPER_FREE_CREDITS` = 100 Hypercredits) já foi
-consumida: `spent = 100 - balance` (0 quando o saldo excede a mesada, ex.:
+(`{"balance": 100}`) — sem janelas de uso, sem o horário de reset e sem o
+plano da equipe. Como a mesada depende do plano — gratuito: 100
+Hypercredits/mês (`HYPER_FREE_CREDITS`); assinatura: 250 Hypercredits/dia
+(`HYPER_MONTHLY_CREDITS`) — o plano é resolvido em
+`CreditsState::resolved_plan`, nesta ordem:
+
+1. override manual `AIBAR_HYPER_PLAN=free|monthly`;
+2. plano "lembrado" (campo `plan`, sticky): saldo acima da mesada gratuita
+   só existe no plano mensal, então a detecção fica gravada no estado (e
+   no cache) e sobrevive ao fim do dia, quando o saldo mensal cai abaixo
+   de 100;
+3. heurística pelo saldo atual (> 100 ⇒ mensal; senão gratuito).
+
+A barra representa o quanto da mesada do plano já foi consumida:
+`spent = allowance - balance` (0 quando o saldo excede a mesada, ex.:
 creditos comprados), mantendo a semântica das demais barras (barra cheia e
 vermelha = quase sem créditos). O sufixo à direita mostra o saldo absoluto
-(`bal 77`; valores fracionários com 1 casa decimal, ex. `bal 42.5`).
+(`bal 109`; valores fracionários com 1 casa decimal, ex. `bal 42.5`).
+
+No plano mensal a linha também mostra o countdown até o próximo refresh
+diário. Como a API não informa o horário, a âncora é observada: quando o
+saldo **sobe** entre dois polls, o refresh acabou de acontecer, então
+`reset_at = now + 24h` (em `AppState::apply_update`, preservado entre
+updates e no cache). Mostra `--` até a primeira subida ser observada. No
+plano gratuito não há coluna de countdown (a cadência mensal exata é
+desconhecida).
 
 Estados especiais: antes do primeiro fetch exibe "Loading credits…"; em erro
 com dados em cache, o prefixo `⚠` e o sufixo `(cached)` — igual às abas Quota.
@@ -636,7 +656,12 @@ pub trait Agent: Send + Sync {
 - **Endpoint:** `GET https://hyper.charm.land/v1/credits`
 - **Auth:** `Authorization: Bearer $HYPER_API_KEY`
 - **Resposta:** `{"balance": <number>}` — saldo atual de Hypercredits da
-  equipe autenticada (cada usuário recebe 100 Hypercredits/mês grátis).
+  equipe autenticada (plano gratuito recebe 100 Hypercredits/mês; assinatura
+  250/dia).
+- **Plano:** o endpoint não informa; a resolução (override
+  `AIBAR_HYPER_PLAN`, detecção sticky > 100, heurística pelo saldo) e a
+  âncora do countdown diário vivem em `CreditsState` (Seção 4.5) — o agente
+  apenas reporta o saldo.
 - **Mapeamento:** `SourceState::Credits` com `balance` (ver Seção 4.5 para a
   renderização). Erros 401 (`authentication_error`) viram erro HTTP do
   reqwest e seguem o fluxo padrão de erro/backoff.

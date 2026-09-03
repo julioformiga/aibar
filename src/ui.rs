@@ -1,6 +1,7 @@
 use crate::app::{AppState, ClickTarget, FooterAction};
-use crate::config::HYPER_FREE_CREDITS;
-use crate::model::{CreditsState, LimitScope, LimitWindow, Provider, SourceState, WindowKind};
+use crate::model::{
+    CreditsState, HyperPlan, LimitScope, LimitWindow, Provider, SourceState, WindowKind,
+};
 use crate::theme::Palette;
 use chrono::{DateTime, Utc};
 use ratatui::layout::{Alignment, Rect};
@@ -418,8 +419,9 @@ fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'sta
     };
 
     let cached = cs.last_error.is_some();
-    let allowance = HYPER_FREE_CREDITS.max(balance);
-    let spent = allowance - balance;
+    let plan = cs.resolved_plan();
+    let allowance = cs.allowance().max(balance);
+    let spent = (allowance - balance).max(0.0);
     let pct = if allowance > 0.0 {
         ((spent / allowance) * 100.0) as f32
     } else {
@@ -435,7 +437,18 @@ fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'sta
         format!("bal {}", fmt_balance(balance))
     };
 
-    let prefix_len = 2 + label_w + 1;
+    // Só o plano mensal tem cadência conhecida (diária); o gratuito não
+    // reserva a coluna de countdown.
+    let countdown = match plan {
+        HyperPlan::Monthly => Some(format!(
+            "{:>width$} ",
+            reset_countdown(cs.reset_at),
+            width = TIME_W - 3
+        )),
+        HyperPlan::Free => None,
+    };
+
+    let prefix_len = 2 + label_w + 1 + countdown.as_deref().map_or(0, |c| c.len());
     let suffix_len = 1 + pct_str.len() + 1 + SUFFIX_W;
     let bar_width = width.saturating_sub(prefix_len + suffix_len + 2).max(10);
 
@@ -454,6 +467,9 @@ fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'sta
     }
     spans.push(Span::raw(label.to_string()));
     spans.push(Span::raw(" "));
+    if let Some(c) = countdown {
+        spans.push(Span::raw(c));
+    }
     spans.push(Span::raw(p.bar_open));
     let denom = bar_width.saturating_sub(1).max(1) as f32;
     for i in 0..filled {
@@ -753,9 +769,20 @@ mod tests {
     }
 
     fn credits_state(balance: Option<f64>, last_error: Option<String>) -> CreditsState {
+        credits_state_with_plan(balance, None, None, last_error)
+    }
+
+    fn credits_state_with_plan(
+        balance: Option<f64>,
+        plan: Option<HyperPlan>,
+        reset_at: Option<DateTime<Utc>>,
+        last_error: Option<String>,
+    ) -> CreditsState {
         CreditsState {
             label: "Hyper".into(),
             balance,
+            plan,
+            reset_at,
             last_updated: None,
             last_error,
         }
@@ -769,6 +796,8 @@ mod tests {
 
     #[test]
     fn credits_line_shows_spent_pct_and_balance() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
         let p = Theme::Default.palette();
         let line = build_credits_line(&credits_state(Some(30.0), None), 80, &p);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
@@ -777,7 +806,9 @@ mod tests {
     }
 
     #[test]
-    fn credits_line_above_free_allowance_is_zero_spent() {
+    fn credits_line_full_monthly_balance_is_zero_spent() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
         let p = Theme::Default.palette();
         let line = build_credits_line(&credits_state(Some(250.0), None), 80, &p);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
@@ -786,7 +817,58 @@ mod tests {
     }
 
     #[test]
+    fn credits_line_monthly_uses_daily_allowance() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+        let p = Theme::Default.palette();
+        let cs = credits_state_with_plan(Some(109.0), Some(HyperPlan::Monthly), None, None);
+        let line = build_credits_line(&cs, 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(" 56%"), "text was: {text}");
+        assert!(text.contains("bal 109"), "text was: {text}");
+        assert!(text.contains("--"), "no anchor yet, text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_monthly_shows_countdown_with_anchor() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+        let p = Theme::Default.palette();
+        let reset_at = Some(Utc::now() + ChronoDuration::seconds(2 * 3_600 + 300));
+        let cs = credits_state_with_plan(Some(109.0), Some(HyperPlan::Monthly), reset_at, None);
+        let line = build_credits_line(&cs, 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("2h"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_free_plan_has_no_countdown_column() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+        let p = Theme::Default.palette();
+        let cs = credits_state_with_plan(Some(30.0), Some(HyperPlan::Free), None, None);
+        let line = build_credits_line(&cs, 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(!text.contains("--"), "text was: {text}");
+        assert!(text.contains(" 70%"), "text was: {text}");
+    }
+
+    #[test]
+    fn credits_line_env_override_forces_plan() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::set_var("AIBAR_HYPER_PLAN", "monthly");
+        let p = Theme::Default.palette();
+        // Sem override seria Free: (100-80)/100 = 20%.
+        let line = build_credits_line(&credits_state(Some(80.0), None), 80, &p);
+        let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains(" 68%"), "text was: {text}");
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+    }
+
+    #[test]
     fn credits_line_formats_fractional_balance() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
         let p = Theme::Default.palette();
         let line = build_credits_line(&credits_state(Some(42.5), None), 80, &p);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
@@ -796,6 +878,8 @@ mod tests {
 
     #[test]
     fn credits_line_cached_shows_warn_and_cached_suffix() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
         let p = Theme::Default.palette();
         let line = build_credits_line(&credits_state(Some(10.0), Some("boom".into())), 80, &p);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();

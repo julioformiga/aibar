@@ -109,8 +109,23 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 |------------------------|---------|----------------------------------|
 | `AIBAR_POLL_SECS`      | `120`   | Background polling interval (seconds) |
 | `AIBAR_COOLDOWN_SECS`  | `30`    | Cooldown for manual refresh (`r`) |
+| `AIBAR_HYPER_PLAN`     | auto    | Force the Hyper plan: `free` or `monthly` |
 | `AIBAR_NO_MOUSE`       | unset   | Set to `1` to disable mouse capture |
 | `AIBAR_LOG`            | `warn`  | `tracing` log level              |
+
+### Hyper plan and daily reset
+
+Hyper's `/v1/credits` endpoint reports only the raw balance — not the team's
+plan — but the percentage depends on it: the free plan grants 100
+Hypercredits/month while the subscription grants 250/day. aibar resolves
+the plan as: `AIBAR_HYPER_PLAN` override, then a sticky detection (a balance
+above 100 can only come from the subscription, and the detection survives
+the end of the day when the balance drops below 100), then the balance
+heuristic. On the monthly plan the line also shows a countdown to the next
+daily refresh: since the API does not expose the reset time, it is anchored
+whenever the balance is observed rising between two polls (`--` until the
+first rise is seen). If you switch plans, set `AIBAR_HYPER_PLAN`
+explicitly (the sticky detection persists in the cache).
 
 Logs are written to `~/.cache/aibar/aibar.log`.
 

@@ -55,7 +55,12 @@ until the user presses `r`.
   the normal case for Claude OAuth, Z.ai, Gemini.
 - `Ceiling(CeilingReport)` — RPM/TPM ceilings with no percentage (Claude API
   key rate_limits endpoint).
-- `Credits(CreditsState)` — a raw balance (Hyper).
+- `Credits(CreditsState)` — a raw balance (Hyper). The plan backing the
+  bar (free 100/mo vs monthly 250/day) is not exposed by the API, so
+  `CreditsState::resolved_plan` resolves it from the `AIBAR_HYPER_PLAN`
+  override, a sticky detection in `apply_update` (balance > 100 ⇒ monthly,
+  persisted via cache), then the balance heuristic; the daily-reset
+  countdown is anchored whenever the balance rises between polls.
 
 `SourceState::usage_changed(&self, &other)` is the trigger for watch-mode
 auto-switching (see below); it compares *every* window, not just the max, and

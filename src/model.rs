@@ -114,13 +114,57 @@ pub struct CeilingReport {
     pub last_error: Option<String>,
 }
 
+/// Plano do Hyper que lastreia a barra de créditos: o `/v1/credits` não
+/// informa o plano, então ele é inferido do saldo e "lembrado" entre polls
+/// (ver `CreditsState::resolved_plan`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HyperPlan {
+    /// Gratuito: 100 Hypercredits/mês (`HYPER_FREE_CREDITS`).
+    Free,
+    /// Assinatura: 250 Hypercredits/dia (`HYPER_MONTHLY_CREDITS`).
+    Monthly,
+}
+
 /// Snapshot de saldo de créditos pré-pagos (ex.: Hypercredits do Hyper).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreditsState {
     pub label: String,
     pub balance: Option<f64>,
+    /// Plano detectado (sticky entre polls; ver `resolved_plan`).
+    #[serde(default)]
+    pub plan: Option<HyperPlan>,
+    /// Melhor estimativa do próximo refresh do plano, ancorada na última
+    /// vez que o saldo subiu entre dois polls.
+    #[serde(default)]
+    pub reset_at: Option<DateTime<Utc>>,
     pub last_updated: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
+}
+
+impl CreditsState {
+    /// Plano efetivo: override `AIBAR_HYPER_PLAN` > plano lembrado >
+    /// heurística pelo saldo (saldo acima da mesada gratuita só existe no
+    /// plano mensal).
+    pub fn resolved_plan(&self) -> HyperPlan {
+        if let Some(plan) = crate::config::hyper_plan_override() {
+            return plan;
+        }
+        if let Some(plan) = self.plan {
+            return plan;
+        }
+        match self.balance {
+            Some(b) if b > crate::config::HYPER_FREE_CREDITS => HyperPlan::Monthly,
+            _ => HyperPlan::Free,
+        }
+    }
+
+    /// Mesada do plano resolvido, usada como denominador da barra.
+    pub fn allowance(&self) -> f64 {
+        match self.resolved_plan() {
+            HyperPlan::Free => crate::config::HYPER_FREE_CREDITS,
+            HyperPlan::Monthly => crate::config::HYPER_MONTHLY_CREDITS,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -379,6 +423,8 @@ mod tests {
             SourceState::Credits(CreditsState {
                 label: "Hyper".into(),
                 balance: b,
+                plan: None,
+                reset_at: None,
                 last_updated: None,
                 last_error: None,
             })
@@ -386,6 +432,88 @@ mod tests {
         assert!(credits(Some(90.0)).usage_changed(&credits(Some(80.0))));
         assert!(!credits(Some(90.0)).usage_changed(&credits(Some(90.0))));
         assert!(!credits(None).usage_changed(&credits(Some(90.0))));
+    }
+
+    fn credits_state(
+        balance: Option<f64>,
+        plan: Option<HyperPlan>,
+        reset_at: Option<DateTime<Utc>>,
+    ) -> CreditsState {
+        CreditsState {
+            label: "Hyper".into(),
+            balance,
+            plan,
+            reset_at,
+            last_updated: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn resolved_plan_prefers_env_override() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+
+        std::env::set_var("AIBAR_HYPER_PLAN", "monthly");
+        assert_eq!(
+            credits_state(Some(30.0), None, None).resolved_plan(),
+            HyperPlan::Monthly
+        );
+
+        std::env::set_var("AIBAR_HYPER_PLAN", "free");
+        assert_eq!(
+            credits_state(Some(250.0), Some(HyperPlan::Monthly), None).resolved_plan(),
+            HyperPlan::Free
+        );
+
+        std::env::set_var("AIBAR_HYPER_PLAN", "not-a-plan");
+        assert_eq!(
+            credits_state(Some(30.0), None, None).resolved_plan(),
+            HyperPlan::Free
+        );
+
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+    }
+
+    #[test]
+    fn resolved_plan_sticky_then_balance_heuristic() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+
+        // Lembrou mensal: saldo baixo no fim do dia continua mensal.
+        assert_eq!(
+            credits_state(Some(30.0), Some(HyperPlan::Monthly), None).resolved_plan(),
+            HyperPlan::Monthly
+        );
+
+        // Sem plano lembrado, heurística pelo saldo.
+        assert_eq!(
+            credits_state(Some(109.0), None, None).resolved_plan(),
+            HyperPlan::Monthly
+        );
+        assert_eq!(
+            credits_state(Some(100.0), None, None).resolved_plan(),
+            HyperPlan::Free
+        );
+        assert_eq!(
+            credits_state(None, None, None).resolved_plan(),
+            HyperPlan::Free
+        );
+    }
+
+    #[test]
+    fn allowance_matches_resolved_plan() {
+        let _guard = crate::config::env_var_test_lock().lock().unwrap();
+        std::env::remove_var("AIBAR_HYPER_PLAN");
+
+        assert_eq!(credits_state(Some(30.0), None, None).allowance(), 100.0);
+        assert_eq!(
+            credits_state(Some(250.0), Some(HyperPlan::Free), None).allowance(),
+            100.0
+        );
+        assert_eq!(
+            credits_state(Some(30.0), Some(HyperPlan::Monthly), None).allowance(),
+            250.0
+        );
     }
 
     #[test]

@@ -53,6 +53,8 @@ impl Agent for HyperAgent {
         SourceState::Credits(CreditsState {
             label: "Hyper".into(),
             balance: None,
+            plan: None,
+            reset_at: None,
             last_updated: None,
             last_error: None,
         })
@@ -75,6 +77,8 @@ impl Agent for HyperAgent {
         Ok(SourceState::Credits(CreditsState {
             label: "Hyper".into(),
             balance: Some(balance),
+            plan: None,
+            reset_at: None,
             last_updated: Some(Utc::now()),
             last_error: None,
         }))
