@@ -1,13 +1,15 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WindowKind {
     FiveHours,
     SevenDays,
+    Minutes(u32),
+    Unknown,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LimitScope {
     Standard,
     ThirdParty,
@@ -76,6 +78,7 @@ pub enum Provider {
     Zai,
     Gemini,
     Hyper,
+    OpenAI,
 }
 
 impl Provider {
@@ -85,6 +88,7 @@ impl Provider {
             Provider::Zai => "Z.ai",
             Provider::Gemini => "Gemini",
             Provider::Hyper => "Hyper",
+            Provider::OpenAI => "OpenAI",
         }
     }
 }
@@ -221,21 +225,10 @@ impl SourceState {
                     return false;
                 }
                 let signature = |p: &ProviderState| {
-                    let mut v: Vec<(u8, Option<u8>, u64, u64)> = p
+                    let mut v: Vec<_> = p
                         .windows
                         .iter()
-                        .map(|w| {
-                            let kind = match w.kind {
-                                WindowKind::FiveHours => 0u8,
-                                WindowKind::SevenDays => 1u8,
-                            };
-                            let scope = match w.scope {
-                                Some(LimitScope::Standard) => Some(0u8),
-                                Some(LimitScope::ThirdParty) => Some(1u8),
-                                None => None,
-                            };
-                            (kind, scope, w.used, w.limit)
-                        })
+                        .map(|w| (w.kind, w.scope, w.used, w.limit))
                         .collect();
                     v.sort_unstable();
                     v
@@ -335,6 +328,7 @@ mod tests {
         assert_eq!(Provider::Claude.label(), "Claude");
         assert_eq!(Provider::Zai.label(), "Z.ai");
         assert_eq!(Provider::Gemini.label(), "Gemini");
+        assert_eq!(Provider::OpenAI.label(), "OpenAI");
     }
 
     #[test]
@@ -401,6 +395,57 @@ mod tests {
         let a = quota_with(100, 700);
         let b = quota_with(100, 700);
         assert!(!a.usage_changed(&b));
+    }
+
+    #[test]
+    fn usage_changed_preserves_dynamic_window_identity() {
+        let before = ProviderState {
+            provider: Provider::OpenAI,
+            label: "OpenAI".into(),
+            windows: vec![
+                LimitWindow::from_fraction(WindowKind::Minutes(90), None, 0.1, None),
+                LimitWindow::from_fraction(WindowKind::Minutes(300), None, 0.7, None),
+                LimitWindow::from_fraction(WindowKind::Unknown, None, 0.2, None),
+            ],
+            last_updated: None,
+            last_error: None,
+        };
+        let original = SourceState::Quota(before.clone());
+        let mut reordered = before.clone();
+        reordered.windows.reverse();
+        reordered.windows[0].reset_at = Some(Utc::now());
+        assert!(!original.usage_changed(&SourceState::Quota(reordered)));
+
+        for kind in [
+            WindowKind::Minutes(60),
+            WindowKind::FiveHours,
+            WindowKind::Unknown,
+        ] {
+            let mut changed = before.clone();
+            changed.windows[1].kind = kind;
+            assert!(original.usage_changed(&SourceState::Quota(changed)));
+        }
+
+        let mut swapped = before.clone();
+        swapped.windows[0].used = before.windows[1].used;
+        swapped.windows[1].used = before.windows[0].used;
+        assert!(original.usage_changed(&SourceState::Quota(swapped)));
+
+        for index in 0..before.windows.len() {
+            let mut changed = before.clone();
+            changed.windows[index].used += 1;
+            assert!(original.usage_changed(&SourceState::Quota(changed)));
+            let mut changed = before.clone();
+            changed.windows[index].limit += 1;
+            assert!(original.usage_changed(&SourceState::Quota(changed)));
+            let mut changed = before.clone();
+            changed.windows[index].scope = Some(LimitScope::Standard);
+            assert!(original.usage_changed(&SourceState::Quota(changed)));
+        }
+
+        let mut empty = before;
+        empty.windows.clear();
+        assert!(!original.usage_changed(&SourceState::Quota(empty)));
     }
 
     #[test]

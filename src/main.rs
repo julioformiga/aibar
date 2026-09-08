@@ -261,7 +261,10 @@ async fn run_poller(
             }
             Ok(Err(e)) => {
                 let error = e.to_string();
-                wait_for_user = agents::gemini::is_login_required(&error);
+                // Errors that only an interactive login can clear: retrying on
+                // a timer would reopen the provider's login flow every cycle.
+                wait_for_user = agents::gemini::is_login_required(&error)
+                    || agents::openai::is_login_required(&error);
                 let _ = app_tx
                     .send(AppMsg::Error {
                         provider,

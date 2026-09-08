@@ -1,6 +1,6 @@
 # aibar — Especificação Técnica
 
-> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai e Gemini, e saldo de Hypercredits para Hyper (Charm).
+> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai, Gemini e OpenAI (Codex), e saldo de Hypercredits para Hyper (Charm).
 
 ---
 
@@ -69,10 +69,16 @@ cada conta está do limite.
 
 ```rust
 /// Tipo de janela de rate limiting.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum WindowKind {
     FiveHours,
     SevenDays,
+    /// Duração arbitrária, em minutos, reportada pela fonte (ex.: Codex, que
+    /// informa `windowDurationMins` e não se limita a 5h/7d).
+    Minutes(u32),
+    /// A fonte não informou a duração da janela — exibido como `?`, nunca
+    /// convertido em 5h/7d por suposição.
+    Unknown,
 }
 
 /// Subcategoria de limite (usado apenas pelo Gemini).
@@ -118,16 +124,17 @@ pub enum Provider {
     Zai,
     Gemini,
     Hyper,
+    OpenAI,
 }
 
 impl Provider {
-    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini", "Hyper"
+    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini", "Hyper", "OpenAI"
 }
 ```
 
 ### 3.3 SourceState — Quota vs Ceiling
 
-Cada fonte de dados produz um `SourceState`, que pode ser de dois tipos:
+Cada fonte de dados produz um `SourceState`, que pode ser de três tipos:
 
 ```rust
 /// Snapshot de limites percentuais (janelas 5h/7d).
@@ -194,6 +201,7 @@ impl SourceState {
 | Z.ai                      | `Quota`      | API retorna usado/total por janela                 |
 | Gemini (Antigravity/agy)  | `Quota`      | Servidor local retorna fração restante por janela  |
 | Hyper (Charm)             | `Credits`    | API retorna saldo de Hypercredits, não janelas     |
+| OpenAI (Codex CLI)        | `Quota`      | Codex retorna % usada por janela do plano ChatGPT  |
 
 ---
 
@@ -242,6 +250,13 @@ indica a janela, exibida em cor cinza escuro para destaque visual.
 Os valores `used/limit` à direita são formatados com sufixos (`1.1k`, `3.2M`).
 Quando a API retorna apenas porcentagem, o limite é notional (1000), então
 exibe `580/1k`.
+
+**Variante OpenAI (Codex):** as barras omitem o sufixo `used/limit` — o limite
+notional é um detalhe interno de escala, não uma contagem real de mensagens —
+e o sufixo de duração vem do reportado pelo Codex: `/90m`, `/12h` etc.
+(ver `window_kind_str`); duração ausente exibe `/?`. Antes do primeiro fetch
+exibe "Loading Codex quota…"; resposta sem janelas ou pós-erro exibe
+"Codex quota unavailable" (nunca barras 5h/7d inventadas).
 
 ### 4.3 Aba Quota — Gemini (4 barras)
 
@@ -368,7 +383,8 @@ Erros também aparecem na linha de status inferior em vermelho.
 │    export GEMINI_API_KEY="..."      # Gemini                        │
 │    export HYPER_API_KEY="..."       # Hyper (Charm)                 │
 │  Fallbacks: ~/.claude/.credentials.json,                            │
-│    pass Z_AI_API_KEY, Antigravity (agy)                             │
+│    pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy),             │
+│    codex (OpenAI Codex CLI, signed in with ChatGPT)                 │
 │  [q] Quit                                                           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -666,7 +682,45 @@ pub trait Agent: Send + Sync {
   renderização). Erros 401 (`authentication_error`) viram erro HTTP do
   reqwest e seguem o fluxo padrão de erro/backoff.
 
-### 6.6 Detecção de Credenciais
+### 6.6 OpenAI — Codex (`agents/openai.rs` → `CodexAgent`)
+
+- **Detecção:** binário `codex` no `PATH` (ou o caminho em
+  `AIBAR_CODEX_BIN`). A detecção só verifica o arquivo — **nenhum
+  subprocesso é iniciado nessa fase**, para não bloquear a inicialização da
+  TUI.
+- **Label:** `"OpenAI (Codex <Plano>)"` (ex.: `"OpenAI (Codex Plus)"`),
+  derivado de `planType`; plano ausente ou desconhecido ⇒ `"OpenAI (Codex)"`.
+  O plano **nunca** é inferido a partir dos valores de quota.
+- **source_id:** `"codex"`
+- **Mecanismo:** não usa a API da OpenAI. Executa
+  `codex app-server --listen stdio://` e fala **JSON-RPC 2.0 por linha**
+  (sem o campo `"jsonrpc"` no wire), reaproveitando o login que o próprio
+  Codex mantém e renova:
+
+  1. `initialize` (uma vez por conexão) + notificação `initialized`;
+  2. `account/read` com `{"refreshToken": false}`;
+  3. `account/rateLimits/read`.
+
+  Somente leitura: **não** cria thread, turno ou prompt, e portanto não
+  consome quota. O processo é morto ao final e também no `Drop` do
+  `ChildGuard`, cobrindo o cancelamento pelo timeout do `run_poller`.
+- **Resposta:** prefere `rateLimitsByLimitId.codex` e cai para `rateLimits`
+  (as duas visões descrevem o mesmo limite; contar ambas duplicaria). Cada
+  janela (`primary`, `secondary`) traz `usedPercent` (0–100),
+  `windowDurationMins` e `resetsAt` (epoch em segundos).
+- **Mapeamento:** `SourceState::Quota` com uma janela por slot presente,
+  via `from_fraction` (`usedPercent / 100`). A duração vira
+  `WindowKind`: 300 ⇒ `FiveHours`, 10080 ⇒ `SevenDays` (nomes canônicos,
+  compatíveis com o cache e com as demais abas), outros valores ⇒
+  `Minutes(n)`, ausente/inválido ⇒ `Unknown`. Janela sem `usedPercent` é
+  omitida — nunca vira 0%.
+- **Login obrigatório:** conta ausente, ou autenticada por **API key** (que
+  não carrega quota de plano ChatGPT), retorna
+  `"codex login required: … run `codex login` …"`. Como no Gemini, o poller
+  não retenta automaticamente nesse caso (`openai::is_login_required`);
+  só o refresh manual (`R`) tenta de novo.
+
+### 6.7 Detecção de Credenciais
 
 ```rust
 fn detect_agents() -> Vec<Box<dyn Agent>> {
@@ -690,6 +744,11 @@ fn detect_agents() -> Vec<Box<dyn Agent>> {
     }
     // Hyper (Charm)
     if let Some(a) = HyperAgent::from_env() {
+        agents.push(Box::new(a));
+    }
+    // OpenAI/Codex por último: assim a nova aba não desloca os índices de
+    // aba/fonte já gravados no cache das provedoras anteriores.
+    if let Some(a) = CodexAgent::from_env() {
         agents.push(Box::new(a));
     }
     agents
@@ -720,7 +779,8 @@ src/
     ├── claude.rs        # ClaudeOAuthAgent + ClaudeApiAgent
     ├── zai.rs           # ZaiAgent
     ├── hyper.rs         # HyperAgent (credits do Hyper/Charm)
-    └── gemini.rs        # GeminiAgent
+    ├── gemini.rs        # GeminiAgent
+    └── openai.rs        # CodexAgent (quota do plano ChatGPT via app-server)
 ```
 
 ### 7.2 Tipos Centrais da Aplicação
@@ -977,6 +1037,7 @@ Opcionais:
 | `AIBAR_COOLDOWN_SECS`| `30`      | Cooldown do refresh manual         |
 | `AIBAR_NO_MOUSE`     | unset     | `1` desativa a captura de mouse    |
 | `AIBAR_LOG`          | `warn`    | Nível de log do `tracing`          |
+| `AIBAR_CODEX_BIN`    | `codex` no `PATH` | Caminho do binário do Codex CLI |
 
 **Fallbacks de credenciais (sem env var):**
 
@@ -985,6 +1046,7 @@ Opcionais:
 | Claude    | OAuth        | `~/.claude/.credentials.json`                   |
 | Z.ai      | default      | `pass Z_AI_API_KEY` (unix password store)       |
 | Gemini    | default      | `~/.gemini/antigravity-cli/log/` (servidor agy) |
+| OpenAI    | codex        | `codex` no `PATH` (login ChatGPT do próprio CLI) |
 
 ---
 

@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod gemini;
 pub mod hyper;
+pub mod openai;
 pub mod zai;
 
 use crate::model::{Provider, SourceState};
@@ -48,6 +49,15 @@ pub fn detect_agents() -> Vec<Box<dyn Agent>> {
             agents.push(Box::new(a));
         }
         None => tracing::info!("hyper not detected"),
+    }
+    // Last so that adding it does not shift the cached tab/source indices of
+    // the providers detected before it.
+    match openai::CodexAgent::from_env() {
+        Some(a) => {
+            tracing::info!("detected openai codex");
+            agents.push(Box::new(a));
+        }
+        None => tracing::info!("openai codex not detected"),
     }
     agents
 }

@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 `aibar` is a Rust TUI (ratatui + crossterm + tokio) that polls AI provider APIs
-(Claude, Z.ai, Gemini, Hyper) for rate-limit / credit usage and displays them
-as tabs with progress bars. Runs in a terminal pane (e.g. a tmux split).
+(Claude, Z.ai, Gemini, Hyper, OpenAI Codex) for rate-limit / credit usage and
+displays them as tabs with progress bars. Runs in a terminal pane (e.g. a tmux
+split).
 
 Full technical spec (data model, per-provider agent details, polling state
 machine, UI layout) lives in `SPEC.md` (Portuguese) — read it before making
@@ -39,20 +40,22 @@ an API-key agent, cycled with `Enter`); `detect_agents()` in `agents/mod.rs`
 is the single place that probes env vars / credential files and constructs
 whichever agents are actually configured. Each provider's detection lives in
 its own `agents/<provider>.rs` (`claude.rs`, `zai.rs`, `gemini.rs`,
-`hyper.rs`), following the pattern of `from_env()` / `detect_all()`
-constructors returning `Option<Self>` / `Vec<Self>` when not configured,
-plus free functions for response parsing that are unit-tested directly
-(parsing logic is kept out of `fetch()` bodies specifically so it can be
-tested without an HTTP layer). `agents/gemini.rs` additionally exposes
-`is_login_required(&str)`, used by `main.rs`'s poller to detect the
-un-recoverable "needs interactive Google login" error and stop auto-retrying
-until the user presses `r`.
+`hyper.rs`, `openai.rs`), following the pattern of `from_env()` /
+`detect_all()` constructors returning `Option<Self>` / `Vec<Self>` when not
+configured, plus free functions for response parsing that are unit-tested
+directly (parsing logic is kept out of `fetch()` bodies specifically so it can
+be tested without an HTTP layer). `agents/gemini.rs` and `agents/openai.rs`
+additionally expose `is_login_required(&str)`, used by `main.rs`'s poller to
+detect the un-recoverable "needs interactive login" error and stop
+auto-retrying until the user presses `r`.
 
 ### Data model — three shapes of "usage" (`src/model.rs`)
 
 `SourceState` is an enum over three ways a source reports usage:
 - `Quota(ProviderState)` — one or more `LimitWindow`s (5h / 7d, used/limit),
-  the normal case for Claude OAuth, Z.ai, Gemini.
+  the normal case for Claude OAuth, Z.ai, Gemini, and OpenAI Codex (whose
+  window lengths come from the API and may be arbitrary durations —
+  `WindowKind::Minutes(u32)` / `Unknown` — not just 5h/7d).
 - `Ceiling(CeilingReport)` — RPM/TPM ceilings with no percentage (Claude API
   key rate_limits endpoint).
 - `Credits(CreditsState)` — a raw balance (Hyper). The plan backing the

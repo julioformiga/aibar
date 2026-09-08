@@ -1,8 +1,8 @@
 # aibar
 
 A minimal terminal UI (TUI) that monitors API rate limits for **Claude**,
-**Z.ai**, and **Gemini** — 5-hour and 7-day usage windows at a glance — plus
-the **Hyper** (Charm) Hypercredit balance.
+**Z.ai**, **Gemini**, and **OpenAI Codex** — 5-hour and 7-day usage windows at
+a glance — plus the **Hyper** (Charm) Hypercredit balance.
 
 Designed to run in a side pane (e.g. a `tmux` split) and give instant visual
 feedback on how close each account is to its limit.
@@ -60,6 +60,34 @@ Fallbacks without an env var:
 | Claude   | OAuth   | `~/.claude/.credentials.json`                     |
 | Z.ai     | default | `pass Z_AI_API_KEY` (Unix password store)         |
 | Gemini   | default | `~/.gemini/antigravity-cli/log/` (local `agy` server) |
+| OpenAI   | codex   | `codex` in `PATH`, signed in with a ChatGPT account |
+
+### OpenAI (Codex)
+
+The OpenAI tab shows the **ChatGPT plan quota that Codex reports** for the
+account the [Codex CLI](https://developers.openai.com/codex/cli) is signed in
+with. aibar reads it over the Codex app-server (`account/read` and
+`account/rateLimits/read`), so it never sends a prompt, starts a turn, or
+manages tokens itself — the CLI keeps handling the login.
+
+What it does **not** show: usage of ordinary ChatGPT conversations in the
+browser or app, OpenAI API spend, and prepaid credit balances. A plain
+`OPENAI_API_KEY` is not used and does not enable this tab.
+
+Window lengths, percentages, and reset times come from Codex as reported;
+aibar never assumes fixed limits for a plan. When a window is missing it is
+shown as unavailable instead of as zero usage.
+
+Set `AIBAR_CODEX_BIN` to point at a specific `codex` binary. If Codex is not
+signed in (or is authenticated with an API key, which carries no plan quota),
+the tab shows:
+
+```
+codex login required: run `codex login` in another terminal, then press R to retry
+```
+
+Auto-retry stops in that case — as with Gemini — so the login flow is not
+reopened every poll; press `r` after signing in.
 
 ### Keybindings
 
@@ -110,6 +138,7 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 | `AIBAR_POLL_SECS`      | `120`   | Background polling interval (seconds) |
 | `AIBAR_COOLDOWN_SECS`  | `30`    | Cooldown for manual refresh (`r`) |
 | `AIBAR_HYPER_PLAN`     | auto    | Force the Hyper plan: `free` or `monthly` |
+| `AIBAR_CODEX_BIN`      | `codex` in `PATH` | Path to the Codex CLI binary |
 | `AIBAR_NO_MOUSE`       | unset   | Set to `1` to disable mouse capture |
 | `AIBAR_LOG`            | `warn`  | `tracing` log level              |
 

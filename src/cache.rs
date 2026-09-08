@@ -156,6 +156,100 @@ mod tests {
     }
 
     #[test]
+    fn save_then_load_round_trips_openai_dynamic_windows() {
+        let cache = Cache {
+            path: temp_cache_path("openai"),
+        };
+
+        let state = CachedState {
+            sources: vec![CachedSource {
+                provider: Provider::OpenAI,
+                source_id: "codex".into(),
+                state: SourceState::Quota(ProviderState {
+                    provider: Provider::OpenAI,
+                    label: "OpenAI (Codex Plus)".into(),
+                    windows: vec![
+                        LimitWindow::from_values(WindowKind::FiveHours, None, 950, 1000, None),
+                        LimitWindow::from_values(WindowKind::Minutes(90), None, 100, 1000, None),
+                        LimitWindow::from_values(WindowKind::Unknown, None, 0, 1000, None),
+                    ],
+                    last_updated: None,
+                    last_error: None,
+                }),
+            }],
+            ..CachedState::default()
+        };
+
+        cache.save(&state).unwrap();
+        let loaded = cache.load().expect("cache file should load");
+
+        assert_eq!(loaded.sources[0].provider, Provider::OpenAI);
+        assert_eq!(loaded.sources[0].source_id, "codex");
+        match &loaded.sources[0].state {
+            SourceState::Quota(ps) => {
+                assert_eq!(ps.label, "OpenAI (Codex Plus)");
+                let kinds: Vec<_> = ps.windows.iter().map(|w| w.kind).collect();
+                assert_eq!(
+                    kinds,
+                    vec![
+                        WindowKind::FiveHours,
+                        WindowKind::Minutes(90),
+                        WindowKind::Unknown,
+                    ]
+                );
+            }
+            _ => panic!("expected Quota state"),
+        }
+
+        let _ = fs::remove_dir_all(cache.path.parent().unwrap());
+    }
+
+    /// A cache written before the dynamic window kinds existed must still
+    /// load; the added enum variants must not break the old encoding.
+    #[test]
+    fn load_reads_cache_written_before_openai_support() {
+        let cache = Cache {
+            path: temp_cache_path("legacy"),
+        };
+        fs::create_dir_all(cache.path.parent().unwrap()).unwrap();
+        fs::write(
+            &cache.path,
+            r#"{
+                "active_tab": 1,
+                "active_sources": { "Claude": 0 },
+                "sources": [{
+                    "provider": "Claude",
+                    "source_id": "oauth",
+                    "state": { "Quota": {
+                        "provider": "Claude",
+                        "label": "Claude (Pro)",
+                        "windows": [
+                            { "kind": "FiveHours", "scope": null, "used": 580, "limit": 1000, "reset_at": null },
+                            { "kind": "SevenDays", "scope": null, "used": 40, "limit": 1000, "reset_at": null }
+                        ],
+                        "last_updated": null,
+                        "last_error": null
+                    }}
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = cache.load().expect("legacy cache should load");
+        assert_eq!(loaded.active_tab, 1);
+        assert_eq!(loaded.theme, Theme::Default);
+        match &loaded.sources[0].state {
+            SourceState::Quota(ps) => {
+                let kinds: Vec<_> = ps.windows.iter().map(|w| w.kind).collect();
+                assert_eq!(kinds, vec![WindowKind::FiveHours, WindowKind::SevenDays]);
+            }
+            _ => panic!("expected Quota state"),
+        }
+
+        let _ = fs::remove_dir_all(cache.path.parent().unwrap());
+    }
+
+    #[test]
     fn cached_state_default_is_empty() {
         let state = CachedState::default();
         assert_eq!(state.active_tab, 0);

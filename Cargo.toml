@@ -2,7 +2,7 @@
 name = "aibar"
 version = "0.1.0"
 edition = "2021"
-description = "TUI monitor for AI API rate limits (Claude, Z.ai, Gemini) and Hyper (Charm) credits"
+description = "TUI monitor for AI API rate limits (Claude, Z.ai, Gemini, OpenAI Codex) and Hyper (Charm) credits"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/julioformiga/aibar"

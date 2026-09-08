@@ -328,6 +328,17 @@ fn draw_quota_lines(
 ) -> Vec<Line<'static>> {
     let has_data = !ps.windows.is_empty();
     let cached = ps.last_error.is_some() && has_data;
+    if ps.provider == Provider::OpenAI && !has_data {
+        let message = if ps.last_updated.is_some() || ps.last_error.is_some() {
+            "  Codex quota unavailable"
+        } else {
+            "  Loading Codex quota\u{2026}"
+        };
+        return vec![Line::from(Span::styled(
+            message,
+            Style::default().fg(p.loading),
+        ))];
+    }
 
     let labels: Vec<String> = if has_data {
         ps.windows
@@ -343,7 +354,15 @@ fn draw_quota_lines(
     if has_data {
         for (i, w) in ps.windows.iter().enumerate() {
             let show_warn = cached && i == 0;
-            lines.push(build_bar_line(w, label_w, show_warn, cached, width, p));
+            lines.push(build_bar_line(
+                w,
+                label_w,
+                show_warn,
+                cached,
+                ps.provider != Provider::OpenAI,
+                width,
+                p,
+            ));
         }
     } else {
         let kinds = placeholder_kinds(ps.provider);
@@ -505,6 +524,7 @@ fn build_bar_line(
     label_w: usize,
     show_warn: bool,
     cached: bool,
+    show_counts: bool,
     width: usize,
     p: &Palette,
 ) -> Line<'static> {
@@ -515,20 +535,34 @@ fn build_bar_line(
     let pct_str = format!("{:>3.0}%", pct);
     let suffix = if cached {
         "(cached)".to_string()
-    } else {
+    } else if show_counts {
         format!("{}/{}", fmt_count(window.used), fmt_count(window.limit))
+    } else {
+        String::new()
     };
 
-    let prefix_len = 2 + label_w + 1 + TIME_W + 2;
-    let suffix_len = 1 + pct_str.len() + 1 + SUFFIX_W;
-    let bar_width = width.saturating_sub(prefix_len + suffix_len + 2).max(10);
+    let time_part = format!("{:>width$}", countdown, width = TIME_W - 3);
+    let kind_part = format!("/{}", kind_str);
+    let suffix_part = if show_counts {
+        format!(" {:<width$}", suffix, width = SUFFIX_W)
+    } else if cached {
+        format!(" {}", suffix)
+    } else {
+        String::new()
+    };
+    let prefix_len = 2 + label_w + 1 + time_part.len() + kind_part.len();
+    let suffix_len = pct_str.len() + suffix_part.len();
+    let bar_width = if show_counts {
+        // Preserve the existing spacing and minimum bar for other providers.
+        width.saturating_sub(prefix_len + suffix_len + 5).max(10)
+    } else {
+        let brackets = Span::raw(p.bar_open).width() + Span::raw(p.bar_close).width();
+        width.saturating_sub(prefix_len + suffix_len + brackets)
+    };
 
     let filled = ((bar_width as f32) * (pct / 100.0)).round() as usize;
     let filled = filled.min(bar_width);
     let empty = bar_width - filled;
-
-    let time_part = format!("{:>width$}", countdown, width = TIME_W - 3);
-    let kind_part = format!("/{}", kind_str);
 
     let mut spans = Vec::new();
 
@@ -566,7 +600,7 @@ fn build_bar_line(
         pct_str,
         Style::default().fg((p.pct_color)(pct)),
     ));
-    spans.push(Span::raw(format!(" {:<width$}", suffix, width = SUFFIX_W)));
+    spans.push(Span::raw(suffix_part));
 
     Line::from(spans)
 }
@@ -617,7 +651,8 @@ fn draw_welcome(f: &mut Frame, area: Rect, p: &Palette) {
         Line::from("  export HYPER_API_KEY=\"...\"       # Hyper (Charm)"),
         Line::from(""),
         Line::from("Fallbacks: ~/.claude/.credentials.json,"),
-        Line::from("  pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy)"),
+        Line::from("  pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy),"),
+        Line::from("  codex (OpenAI Codex CLI, signed in with ChatGPT)"),
         Line::from(""),
         Line::from("[q] Quit"),
     ];
@@ -634,17 +669,21 @@ fn scope_label(window: &LimitWindow) -> &str {
     }
 }
 
-fn window_kind_str(kind: WindowKind) -> &'static str {
+fn window_kind_str(kind: WindowKind) -> String {
     match kind {
-        WindowKind::FiveHours => "5h",
-        WindowKind::SevenDays => "7d",
+        WindowKind::FiveHours => "5h".into(),
+        WindowKind::SevenDays => "7d".into(),
+        WindowKind::Minutes(m) if m > 0 && m % 1440 == 0 => format!("{}d", m / 1440),
+        WindowKind::Minutes(m) if m > 0 && m % 60 == 0 => format!("{}h", m / 60),
+        WindowKind::Minutes(m) => format!("{}m", m),
+        WindowKind::Unknown => "?".into(),
     }
 }
 
 fn placeholder_labels(provider: Provider) -> Vec<String> {
     match provider {
         Provider::Claude | Provider::Zai => vec!["".to_string(), "".to_string()],
-        Provider::Hyper => vec![],
+        Provider::Hyper | Provider::OpenAI => vec![],
         Provider::Gemini => vec![
             "Google".into(),
             "Google".into(),
@@ -657,7 +696,7 @@ fn placeholder_labels(provider: Provider) -> Vec<String> {
 fn placeholder_kinds(provider: Provider) -> Vec<WindowKind> {
     match provider {
         Provider::Claude | Provider::Zai => vec![WindowKind::FiveHours, WindowKind::SevenDays],
-        Provider::Hyper => vec![],
+        Provider::Hyper | Provider::OpenAI => vec![],
         Provider::Gemini => vec![
             WindowKind::FiveHours,
             WindowKind::SevenDays,
@@ -905,7 +944,7 @@ mod tests {
             reset_at: None,
         };
         let btop = Theme::Btop.palette();
-        let line = build_bar_line(&w, 7, false, false, 80, &btop);
+        let line = build_bar_line(&w, 7, false, false, true, 80, &btop);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains(" 50%"), "text was: {text}");
         assert!(!text.contains('['), "btop bars have no brackets: {text}");
@@ -930,10 +969,160 @@ mod tests {
             reset_at: None,
         };
         let default = Theme::Default.palette();
-        let line = build_bar_line(&w, 3, false, false, 80, &default);
+        let line = build_bar_line(&w, 3, false, false, true, 80, &default);
         let text: String = line.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("["), "text was: {text}");
         assert!(text.contains("]"));
+    }
+
+    fn openai_state(windows: Vec<LimitWindow>, updated: bool, error: Option<&str>) -> SourceState {
+        SourceState::Quota(crate::model::ProviderState {
+            provider: Provider::OpenAI,
+            label: "OpenAI (Codex Plus)".into(),
+            windows,
+            last_updated: updated.then(Utc::now),
+            last_error: error.map(|e| e.to_string()),
+        })
+    }
+
+    fn quota_text(state: &SourceState, width: usize) -> String {
+        let SourceState::Quota(ps) = state else {
+            panic!("expected Quota state");
+        };
+        draw_quota_lines(ps, width, &Theme::Default.palette())
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn codex_bars_show_percent_and_reset_without_fake_counts() {
+        let state = openai_state(
+            vec![
+                // The extra second keeps the countdown from rounding down
+                // while the test runs.
+                LimitWindow::from_fraction(
+                    WindowKind::FiveHours,
+                    None,
+                    0.95,
+                    Some(Utc::now() + ChronoDuration::minutes(150) + ChronoDuration::seconds(1)),
+                ),
+                LimitWindow::from_fraction(
+                    WindowKind::SevenDays,
+                    None,
+                    0.15,
+                    Some(Utc::now() + ChronoDuration::hours(80) + ChronoDuration::seconds(1)),
+                ),
+            ],
+            true,
+            None,
+        );
+
+        let text = quota_text(&state, 80);
+        assert!(text.contains(" 95%"), "text was: {text}");
+        assert!(text.contains(" 15%"), "text was: {text}");
+        assert!(text.contains("/5h"), "text was: {text}");
+        assert!(text.contains("/7d"), "text was: {text}");
+        assert!(text.contains("2h30m"), "text was: {text}");
+        assert!(text.contains("3d08h"), "text was: {text}");
+        // The notional 1000 limit is an internal scaling detail, not a real
+        // message count, so it must never reach the Codex tab.
+        assert!(!text.contains("/1k"), "text was: {text}");
+    }
+
+    #[test]
+    fn codex_renders_dynamic_window_durations() {
+        let state = openai_state(
+            vec![
+                LimitWindow::from_fraction(WindowKind::Minutes(90), None, 0.2, None),
+                LimitWindow::from_fraction(WindowKind::Minutes(720), None, 0.3, None),
+                LimitWindow::from_fraction(WindowKind::Unknown, None, 0.4, None),
+            ],
+            true,
+            None,
+        );
+
+        let text = quota_text(&state, 80);
+        assert!(text.contains("/90m"), "text was: {text}");
+        assert!(text.contains("/12h"), "text was: {text}");
+        assert!(text.contains("/?"), "text was: {text}");
+    }
+
+    #[test]
+    fn codex_empty_state_distinguishes_loading_from_unavailable() {
+        let loading = quota_text(&openai_state(vec![], false, None), 80);
+        assert!(
+            loading.contains("Loading Codex quota"),
+            "text was: {loading}"
+        );
+
+        let empty_response = quota_text(&openai_state(vec![], true, None), 80);
+        assert!(
+            empty_response.contains("Codex quota unavailable"),
+            "text was: {empty_response}"
+        );
+
+        let failed = quota_text(
+            &openai_state(
+                vec![],
+                false,
+                Some("codex login required: run `codex login`"),
+            ),
+            80,
+        );
+        assert!(
+            failed.contains("Codex quota unavailable"),
+            "text was: {failed}"
+        );
+
+        // No invented 5h/7d placeholder bars before Codex answers.
+        for text in [loading, empty_response, failed] {
+            assert!(!text.contains("/5h"), "text was: {text}");
+            assert!(!text.contains("/7d"), "text was: {text}");
+        }
+    }
+
+    #[test]
+    fn codex_bars_survive_narrow_terminals() {
+        let state = openai_state(
+            vec![LimitWindow::from_fraction(
+                WindowKind::FiveHours,
+                None,
+                0.95,
+                None,
+            )],
+            true,
+            None,
+        );
+
+        for width in [0usize, 1, 8, 20, 40] {
+            let text = quota_text(&state, width);
+            assert!(text.contains("95%"), "width {width} produced: {text}");
+        }
+    }
+
+    #[test]
+    fn codex_cached_state_marks_stale_data() {
+        let state = openai_state(
+            vec![LimitWindow::from_fraction(
+                WindowKind::FiveHours,
+                None,
+                0.5,
+                None,
+            )],
+            true,
+            Some("request timed out"),
+        );
+
+        let text = quota_text(&state, 80);
+        assert!(text.contains("(cached)"), "text was: {text}");
+        assert!(text.contains(WARN), "text was: {text}");
     }
 
     #[test]
