@@ -9,6 +9,7 @@ pub enum Theme {
     Default,
     Crush,
     Btop,
+    Opencode,
 }
 
 impl Theme {
@@ -17,6 +18,7 @@ impl Theme {
             Theme::Default => "default",
             Theme::Crush => "crush",
             Theme::Btop => "btop",
+            Theme::Opencode => "opencode",
         }
     }
 
@@ -24,15 +26,17 @@ impl Theme {
         match self {
             Theme::Default => Theme::Crush,
             Theme::Crush => Theme::Btop,
-            Theme::Btop => Theme::Default,
+            Theme::Btop => Theme::Opencode,
+            Theme::Opencode => Theme::Default,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Theme::Default => Theme::Btop,
+            Theme::Default => Theme::Opencode,
             Theme::Crush => Theme::Default,
             Theme::Btop => Theme::Crush,
+            Theme::Opencode => Theme::Btop,
         }
     }
 
@@ -41,15 +45,17 @@ impl Theme {
             Theme::Default => default_palette(),
             Theme::Crush => crush_palette(),
             Theme::Btop => btop_palette(),
+            Theme::Opencode => opencode_palette(),
         }
     }
 
     pub fn for_provider(label: &str) -> Self {
         match label {
             "Claude" => Theme::Default,
-            "Z.ai" => Theme::Crush,
+            "Z.ai" => Theme::Opencode,
             "Hyper" => Theme::Crush,
             "Gemini" => Theme::Btop,
+            "OpenAI" => Theme::Opencode,
             _ => Theme::Default,
         }
     }
@@ -72,6 +78,9 @@ pub struct Palette {
     pub pct_color: fn(pct: f32) -> Color,
     pub kind: Color,
     pub status: Color,
+    /// Explicit fg for time/token count indicators (countdown, `used/limit`,
+    /// balance). `None` keeps the terminal's default foreground.
+    pub metrics: Option<Color>,
     pub error: Color,
     pub warn: Color,
     pub hint_key: Style,
@@ -149,6 +158,22 @@ fn timer_btop(_pos: f32) -> Color {
     rgb(0xCBC06C)
 }
 
+// OpenCode default theme, dark variant (packages/tui/src/theme/assets/opencode.json):
+// mostly grays — bg #0A0A0A, border #484848, borderSubtle #3C3C3C, text #EEEEEE,
+// textMuted #808080 — with secondary blue #5C9CF5 and accent purple #9D7CD8
+// reserved for the timer gradient; bars/percentages reuse the same blue.
+fn opencode_blue(_pct: f32) -> Color {
+    rgb(0x5C9CF5)
+}
+
+fn opencode_bar_blue(_pct: f32, _pos: f32) -> Color {
+    opencode_blue(_pct)
+}
+
+fn timer_opencode(pos: f32) -> Color {
+    lerp_color(rgb(0x5C9CF5), rgb(0x9D7CD8), pos.clamp(0.0, 1.0))
+}
+
 fn btop_pct(pct: f32) -> Color {
     btop_gradient_at(pct / 100.0)
 }
@@ -156,6 +181,11 @@ fn btop_pct(pct: f32) -> Color {
 #[cfg(test)]
 pub(crate) fn test_bg() -> Color {
     rgb(0x1F1C23)
+}
+
+#[cfg(test)]
+pub(crate) fn test_opencode_bg() -> Color {
+    rgb(0x0A0A0A)
 }
 
 fn default_palette() -> Palette {
@@ -180,6 +210,7 @@ fn default_palette() -> Palette {
         pct_color: color_for_percentage,
         kind: Color::DarkGray,
         status: Color::DarkGray,
+        metrics: None,
         error: Color::Red,
         warn: Color::Yellow,
         hint_key: Style::default().add_modifier(Modifier::BOLD),
@@ -216,6 +247,7 @@ fn crush_palette() -> Palette {
         pct_color: crush_severity,
         kind: rgb(0x858392),
         status: rgb(0x858392),
+        metrics: None,
         error: rgb(0xEB4268),
         warn: rgb(0xF5EF34),
         hint_key: Style::default()
@@ -258,6 +290,7 @@ fn btop_palette() -> Palette {
         pct_color: btop_pct,
         kind: rgb(0x606060),
         status: rgb(0x606060),
+        metrics: None,
         error: rgb(0xB54040),
         warn: rgb(0xDC4C4C),
         hint_key: Style::default()
@@ -276,6 +309,41 @@ fn btop_palette() -> Palette {
     }
 }
 
+fn opencode_palette() -> Palette {
+    let subtle = rgb(0x808080);
+    let text = rgb(0xEEEEEE);
+    Palette {
+        bg: Some(rgb(0x0A0A0A)),
+        border: BorderType::Rounded,
+        border_color: Some(rgb(0x484848)),
+        title: Style::default().add_modifier(Modifier::BOLD).fg(text),
+        tab_active: Style::default().add_modifier(Modifier::BOLD).fg(text),
+        tab_inactive: Style::default().fg(subtle),
+        tab_separator: Some(rgb(0x3C3C3C)),
+        bar_open: " [",
+        bar_close: "] ",
+        filled_char: '\u{28FF}',
+        empty_char: '\u{28C0}',
+        empty_style: Style::default().fg(rgb(0x3C3C3C)),
+        bar_fill: opencode_bar_blue,
+        pct_color: opencode_blue,
+        kind: subtle,
+        status: subtle,
+        metrics: Some(text),
+        error: rgb(0xE06C75),
+        warn: rgb(0xF5A742),
+        hint_key: Style::default().add_modifier(Modifier::BOLD).fg(text),
+        hint_text: Some(subtle),
+        timer_filled: Some(timer_opencode),
+        timer_empty: Some(rgb(0x3C3C3C)),
+        loading: subtle,
+        ceiling_rpm: text,
+        ceiling_in: text,
+        ceiling_out: text,
+        welcome_title: Style::default().add_modifier(Modifier::BOLD).fg(text),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,8 +352,10 @@ mod tests {
     fn next_and_prev_cycle_through_all_themes() {
         assert_eq!(Theme::Default.next(), Theme::Crush);
         assert_eq!(Theme::Crush.next(), Theme::Btop);
-        assert_eq!(Theme::Btop.next(), Theme::Default);
-        assert_eq!(Theme::Default.prev(), Theme::Btop);
+        assert_eq!(Theme::Btop.next(), Theme::Opencode);
+        assert_eq!(Theme::Opencode.next(), Theme::Default);
+        assert_eq!(Theme::Default.prev(), Theme::Opencode);
+        assert_eq!(Theme::Opencode.prev(), Theme::Btop);
         assert_eq!(Theme::Btop.prev(), Theme::Crush);
         assert_eq!(Theme::Crush.prev(), Theme::Default);
     }
@@ -295,6 +365,17 @@ mod tests {
         assert_eq!(Theme::Default.label(), "default");
         assert_eq!(Theme::Crush.label(), "crush");
         assert_eq!(Theme::Btop.label(), "btop");
+        assert_eq!(Theme::Opencode.label(), "opencode");
+    }
+
+    #[test]
+    fn for_provider_maps_automated_themes() {
+        assert_eq!(Theme::for_provider("Claude"), Theme::Default);
+        assert_eq!(Theme::for_provider("Z.ai"), Theme::Opencode);
+        assert_eq!(Theme::for_provider("OpenAI"), Theme::Opencode);
+        assert_eq!(Theme::for_provider("Hyper"), Theme::Crush);
+        assert_eq!(Theme::for_provider("Gemini"), Theme::Btop);
+        assert_eq!(Theme::for_provider("Unknown"), Theme::Default);
     }
 
     #[test]
@@ -338,10 +419,44 @@ mod tests {
     }
 
     #[test]
-    fn only_crush_sets_a_solid_background() {
+    fn themes_with_solid_background() {
         assert_eq!(Theme::Default.palette().bg, None);
         assert_eq!(Theme::Crush.palette().bg, Some(rgb(0x1F1C23)));
         assert_eq!(Theme::Btop.palette().bg, None);
+        assert_eq!(Theme::Opencode.palette().bg, Some(rgb(0x0A0A0A)));
+    }
+
+    #[test]
+    fn opencode_bars_and_percentages_use_timer_blue() {
+        let p = Theme::Opencode.palette();
+        assert_eq!((p.bar_fill)(10.0, 0.0), rgb(0x5C9CF5));
+        assert_eq!((p.bar_fill)(95.0, 1.0), rgb(0x5C9CF5));
+        assert_eq!((p.pct_color)(95.0), rgb(0x5C9CF5));
+        assert_eq!(
+            (p.timer_filled.unwrap())(0.0),
+            rgb(0x5C9CF5),
+            "timer gradient starts at the same blue"
+        );
+    }
+
+    #[test]
+    fn opencode_uses_braille_dots_and_white_metrics() {
+        let p = Theme::Opencode.palette();
+        assert_eq!(p.filled_char, '\u{28FF}');
+        assert_eq!(p.empty_char, '\u{28C0}');
+        assert_eq!(p.metrics, Some(rgb(0xEEEEEE)));
+        assert_eq!(
+            p.title,
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(rgb(0xEEEEEE))
+        );
+        assert_eq!(p.tab_active, p.title);
+        assert_eq!(
+            (p.timer_filled.unwrap())(1.0),
+            rgb(0x9D7CD8),
+            "timer gradient keeps opencode accent purple"
+        );
     }
 
     #[test]
@@ -349,9 +464,14 @@ mod tests {
         let d = Theme::Default.palette();
         let c = Theme::Crush.palette();
         let b = Theme::Btop.palette();
+        let o = Theme::Opencode.palette();
         assert_ne!(d.filled_char, c.filled_char);
         assert_ne!(d.bar_open, b.bar_open);
         assert_ne!(d.tab_active, c.tab_active);
         assert_ne!(c.tab_active, b.tab_active);
+        assert_ne!(o.filled_char, c.filled_char);
+        assert_ne!(o.bar_open, b.bar_open);
+        assert_ne!(o.tab_active, c.tab_active);
+        assert_ne!(o.tab_active, b.tab_active);
     }
 }

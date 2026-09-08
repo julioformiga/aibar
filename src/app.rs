@@ -689,8 +689,12 @@ mod tests {
         app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(app.theme, Theme::Btop);
         app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Opencode);
+        app.handle_input(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         assert_eq!(app.theme, Theme::Default);
 
+        app.handle_input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.theme, Theme::Opencode);
         app.handle_input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         assert_eq!(app.theme, Theme::Btop);
         app.handle_input(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));

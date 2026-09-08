@@ -487,7 +487,7 @@ fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'sta
     spans.push(Span::raw(label.to_string()));
     spans.push(Span::raw(" "));
     if let Some(c) = countdown {
-        spans.push(Span::raw(c));
+        spans.push(metrics_span(c, p));
     }
     spans.push(Span::raw(p.bar_open));
     let denom = bar_width.saturating_sub(1).max(1) as f32;
@@ -510,7 +510,10 @@ fn build_credits_line(cs: &CreditsState, width: usize, p: &Palette) -> Line<'sta
         pct_str,
         Style::default().fg((p.pct_color)(pct)),
     ));
-    spans.push(Span::raw(format!(" {:<width$}", suffix, width = SUFFIX_W)));
+    spans.push(metrics_span(
+        format!(" {:<width$}", suffix, width = SUFFIX_W),
+        p,
+    ));
 
     Line::from(spans)
 }
@@ -577,7 +580,7 @@ fn build_bar_line(
 
     spans.push(Span::raw(format!("{:<width$}", label, width = label_w)));
     spans.push(Span::raw(" "));
-    spans.push(Span::raw(time_part));
+    spans.push(metrics_span(time_part, p));
     spans.push(Span::styled(kind_part, Style::default().fg(p.kind)));
     spans.push(Span::raw(p.bar_open));
     let denom = bar_width.saturating_sub(1).max(1) as f32;
@@ -600,9 +603,16 @@ fn build_bar_line(
         pct_str,
         Style::default().fg((p.pct_color)(pct)),
     ));
-    spans.push(Span::raw(suffix_part));
+    spans.push(metrics_span(suffix_part, p));
 
     Line::from(spans)
+}
+
+fn metrics_span(s: String, p: &Palette) -> Span<'static> {
+    match p.metrics {
+        Some(c) => Span::styled(s, Style::default().fg(c)),
+        None => Span::raw(s),
+    }
 }
 
 fn build_loading_line(
@@ -622,7 +632,10 @@ fn build_loading_line(
     let mut spans = Vec::new();
     spans.push(Span::raw("  "));
     spans.push(Span::raw(format!("{:<width$}", label, width = label_w)));
-    spans.push(Span::raw(format!(" {:>width$}", "--", width = TIME_W - 3)));
+    spans.push(metrics_span(
+        format!(" {:>width$}", "--", width = TIME_W - 3),
+        p,
+    ));
     spans.push(Span::styled(
         format!("/{}", kind_str),
         Style::default().fg(p.kind),
@@ -1156,7 +1169,7 @@ mod tests {
         use ratatui::Terminal;
         use tokio::sync::mpsc;
 
-        for theme in [Theme::Default, Theme::Crush, Theme::Btop] {
+        for theme in [Theme::Default, Theme::Crush, Theme::Btop, Theme::Opencode] {
             let (tx, _rx) = mpsc::channel(4);
             let tab = Tab {
                 provider: Provider::Claude,
@@ -1224,6 +1237,18 @@ mod tests {
                     assert_eq!(
                         buf[(0u16, 9u16)].bg,
                         crate::theme::test_bg(),
+                        "bottom border row also painted"
+                    );
+                }
+                Theme::Opencode => {
+                    assert!(
+                        frame.contains('\u{256d}'),
+                        "opencode should use rounded corners"
+                    );
+                    assert_eq!(buf[(0u16, 0u16)].bg, crate::theme::test_opencode_bg());
+                    assert_eq!(
+                        buf[(0u16, 9u16)].bg,
+                        crate::theme::test_opencode_bg(),
                         "bottom border row also painted"
                     );
                 }

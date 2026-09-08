@@ -96,7 +96,7 @@ reopened every poll; press `r` after signing in.
 | `1`–`9`             | Jump directly to tab 1–9                 |
 | `Tab` / `→`         | Next tab                                 |
 | `Shift+Tab` / `←`   | Previous tab                             |
-| `↑` / `↓`           | Cycle theme (default → crush → btop)     |
+| `↑` / `↓`           | Cycle theme (default → crush → btop → opencode) |
 | `Enter`             | Cycle source (when a provider has more than one) |
 | `r`                 | Force refresh (30s cooldown)             |
 | `w`                 | Toggle watch mode (auto-switch on change) |
@@ -117,7 +117,7 @@ native click-drag text selection).
 
 ### Themes
 
-Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
+Four built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 
 - **default** — classic aibar: rounded `[`/`]` blocks bars, green/yellow/red
   by usage threshold.
@@ -130,6 +130,12 @@ Three built-in themes, cycled with `↑`/`↓` and persisted in the local cache:
 - **btop** — inspired by btop's default theme: colored box border, red
   selection-highlighted tab, green→yellow→red CPU-style gradient bars with a
   solid track.
+- **opencode** — based on OpenCode's default theme (dark variant): mostly
+  grays — near-black `#0A0A0A` panel background, subtle gray rounded border
+  (`#484848`), white bold title and active tab, muted `#808080` text — with
+  braille-dot bars (`[⣿⣀]`) and percentages in OpenCode's secondary blue
+  (`#5C9CF5`), time/token indicators in white, and a blue→purple timer
+  gradient (`#5C9CF5`→`#9D7CD8`).
 
 ### Optional configuration
 

@@ -411,27 +411,36 @@ pub fn color_for_percentage(pct: f32) -> Color {
 
 ### 4.10 Temas
 
-Três temas embutidos (`src/theme.rs`), alternados com `↑`/`↓` (com wrap) e
+Quatro temas embutidos (`src/theme.rs`), alternados com `↑`/`↓` (com wrap) e
 persistidos no cache (`state.json` → `theme`). O tema ativo é exibido
-brevemente na linha de status (`theme: crush`).
+brevemente na linha de status (`theme: crush`). Trocar de aba também
+seleciona automaticamente o tema da provedora ativa (`for_provider`:
+Claude → `default`, Z.ai → `opencode`, Hyper → `crush`, Gemini → `btop`,
+OpenAI → `opencode`).
 
 | Tema       | Identidade visual                                                                 |
 |------------|-----------------------------------------------------------------------------------|
 | `default`  | Visual clássico do aibar: bordas retas, barras `[█▒]`, cores por faixa (verde/amarelo/vermelho), aba ativa amarela sublinhada |
 | `crush`    | Paleta Charmtone Pantera (do agente Crush): bordas arredondadas em lilás Hazy (`#8B75FF`, como o box de input do Crush) sobre fundo escuro `#1F1C23` (extraído da screenshot do Crush, pintado inclusive sob a moldura), título branco brilhante (Salt `#F7F6FB`) com separadores de aba em Iron (`#4D4C57`), aba ativa magenta Dolly (`#FF60FF`), barras `(━┄)` com gradiente Hazy→Dolly (`#8B75FF`→`#FF60FF`), severidade menta/mostarda/rosa (`#00FFB2`/`#F5EF34`/`#EB4268`), texto sutil em Squid (`#858392`), timer em gradiente lilás→magenta |
 | `btop`     | Tema default do btop: borda esverdeada (`#556D59`), aba ativa com fundo vermelho selecionado (`#6A2F2F`), barras sem colchetes com gradiente CPU (`#77CA9B`→`#CBC06C`→`#DC4C4C`) sobre trilho cinza sólido, timer amarelo (`#CBC06C`) |
+| `opencode` | Tema default do OpenCode (variante dark), basicamente tons de cinza: fundo quase preto `#0A0A0A` pintado no painel inteiro (inclusive sob a moldura), bordas arredondadas em cinza sutil (`#484848`), título e aba ativa em branco bold (`#EEEEEE`), abas inativas e texto sutil em `#808080` (textMuted), separadores em `#3C3C3C` (borderSubtle), barras `[⣿⣀]` em braille com preenchimento e porcentagens em azul sólido `#5C9CF5` (secondary do OpenCode, o mesmo azul do início do timer), indicadores de hora e tokens (countdown, `used/limit`, saldo) em branco via `metrics`, RPM/in/out em branco, timer em gradiente azul→roxo (secondary→accent, `#5C9CF5`→`#9D7CD8`) |
 
-A paleta define: background sólido opcional (o tema `crush` pinta o painel
-inteiro com `#1F1C23`, inclusive sob a moldura; os demais usam o fundo do
-terminal), tipo/cor de borda, estilo do título e das abas, separadores,
+A paleta define: background sólido opcional (os temas `crush` e `opencode`
+pintam o painel inteiro — `#1F1C23` e `#0A0A0A` respectivamente, inclusive sob
+a moldura; os demais usam o fundo do terminal), tipo/cor de borda, estilo do
+título e das abas, separadores,
 caracteres de barra (cheio/vazio, aberturas), cor de trilho vazio, função de
 cor por posição da barra (gradiente) e por porcentagem, cor do sufixo
-`/5h`/`/7d`, cores de status/erro/warn, cores das dicas, cores do timer,
+`/5h`/`/7d`, cor opcional `metrics` para os indicadores de hora e tokens
+(countdown, `used/limit`, saldo; `None` = cor padrão do terminal), cores de
+status/erro/warn, cores das dicas, cores do timer,
 carregando, RPM/TPM e tela de boas-vindas.
 
 No tema `default`, `bar_fill`/`pct_color` usam os mesmos thresholds de
-`color_for_percentage` (Seção 4.8), preservando o comportamento original.
-Nos temas `crush` e `btop`, cada célula da barra recebe a cor do gradiente na
+`color_for_percentage` (Seção 4.8), preservando o comportamento original. O
+tema `opencode` usa azul sólido (`#5C9CF5`) independente da porcentagem. Nos
+temas `crush` e `btop`, cada célula da barra recebe a cor do
+gradiente na
 sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 
 ### 4.11 Keybindings
@@ -441,7 +450,7 @@ sua posição (`i / (bar_width - 1)`), como os gráficos do btop.
 | `1`–`9`         | Jump directly to tab 1–9                          |
 | `Tab` / `→`     | Next tab                                          |
 | `Shift+Tab` / `←` | Previous tab                                    |
-| `↑` / `↓`       | Cycle theme (default → crush → btop, com wrap)    |
+| `↑` / `↓`       | Cycle theme (default → crush → btop → opencode, com wrap) |
 | `Enter`         | Cycle source (apenas se há múltiplas fontes)      |
 | `r`             | Force refresh (30 s cooldown)                     |
 | `w`             | Toggle watch mode (auto-switch ao mudar uso)      |
@@ -541,8 +550,8 @@ Localização: `~/.cache/aibar/state.json`
 
 O cache preserva:
 - `active_tab`: última aba selecionada.
-- `theme`: último tema selecionado (`"default"`, `"crush"` ou `"btop"`);
-  ausente em caches antigos → `default` (via `#[serde(default)]`).
+- `theme`: último tema selecionado (`"default"`, `"crush"`, `"btop"` ou
+  `"opencode"`); ausente em caches antigos → `default` (via `#[serde(default)]`).
 - `active_sources`: última fonte ativa por provedora (ex.: `{"Claude": 0}`).
 - `sources`: snapshot completo de cada fonte, usado para exibir dados em
   cache enquanto o primeiro poll não completa.

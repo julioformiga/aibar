@@ -110,7 +110,7 @@ runs tests in the same process across threads).
 ### UI (`src/ui.rs`, `src/theme.rs`)
 
 `ui::draw` is a pure function of `&AppState`; it does no I/O and holds no
-state of its own. Three built-in `Theme`s (`Default`/`Crush`/`Btop`) are
+state of its own. Four built-in `Theme`s (`Default`/`Crush`/`Btop`/`Opencode`) are
 cycled with `↑`/`↓` and persisted in the cache; a theme defines colors/border
 style only, not layout.
 
