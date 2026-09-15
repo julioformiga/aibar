@@ -1,6 +1,6 @@
 # aibar — Especificação Técnica
 
-> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai, Gemini e OpenAI (Codex), e saldo de Hypercredits para Hyper (Charm).
+> Monitor TUI de limites de API (janelas de 5h e 7 dias) para Claude, Z.ai, Gemini, OpenAI (Codex) e Kimi Code, e saldo de Hypercredits para Hyper (Charm).
 
 ---
 
@@ -125,10 +125,11 @@ pub enum Provider {
     Gemini,
     Hyper,
     OpenAI,
+    Kimi,
 }
 
 impl Provider {
-    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini", "Hyper", "OpenAI"
+    pub fn label(self) -> &'static str;  // "Claude", "Z.ai", "Gemini", "Hyper", "OpenAI", "Kimi Code"
 }
 ```
 
@@ -202,6 +203,7 @@ impl SourceState {
 | Gemini (Antigravity/agy)  | `Quota`      | Servidor local retorna fração restante por janela  |
 | Hyper (Charm)             | `Credits`    | API retorna saldo de Hypercredits, não janelas     |
 | OpenAI (Codex CLI)        | `Quota`      | Codex retorna % usada por janela do plano ChatGPT  |
+| Kimi Code                 | `Quota`      | API retorna usado/limite por janela (rolling + 7d) |
 
 ---
 
@@ -382,8 +384,10 @@ Erros também aparecem na linha de status inferior em vermelho.
 │    export ZAI_API_KEY="..."         # Z.ai                          │
 │    export GEMINI_API_KEY="..."      # Gemini                        │
 │    export HYPER_API_KEY="..."       # Hyper (Charm)                 │
+│    export KIMI_API_KEY="..."        # Kimi Code                     │
 │  Fallbacks: ~/.claude/.credentials.json,                            │
-│    pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy),             │
+│    pass Z_AI_API_KEY, HYPER_API_KEY, KIMI_API_KEY,                  │
+│    Antigravity (agy),                                               │
 │    codex (OpenAI Codex CLI, signed in with ChatGPT)                 │
 │  [q] Quit                                                           │
 └─────────────────────────────────────────────────────────────────────┘
@@ -416,7 +420,7 @@ persistidos no cache (`state.json` → `theme`). O tema ativo é exibido
 brevemente na linha de status (`theme: crush`). Trocar de aba também
 seleciona automaticamente o tema da provedora ativa (`for_provider`:
 Claude → `default`, Z.ai → `opencode`, Hyper → `crush`, Gemini → `btop`,
-OpenAI → `opencode`).
+OpenAI → `opencode`, Kimi Code → `opencode`).
 
 | Tema       | Identidade visual                                                                 |
 |------------|-----------------------------------------------------------------------------------|
@@ -565,7 +569,7 @@ Cada fonte implementa um trait comum:
 ```rust
 #[async_trait::async_trait]
 pub trait Agent: Send + Sync {
-    /// Tipo da provedora (Claude, Zai, Gemini).
+    /// Tipo da provedora (Claude, Zai, Gemini, ...).
     fn provider(&self) -> Provider;
 
     /// Identificador único da fonte dentro da provedora (ex.: "oauth",
@@ -729,7 +733,28 @@ pub trait Agent: Send + Sync {
   não retenta automaticamente nesse caso (`openai::is_login_required`);
   só o refresh manual (`R`) tenta de novo.
 
-### 6.7 Detecção de Credenciais
+### 6.7 Kimi Code (`agents/kimi.rs` → `KimiAgent`)
+
+- **Detecção:** Variável de ambiente `KIMI_API_KEY` (não vazia).
+  **Fallback:** comando `pass KIMI_API_KEY` (unix password store).
+- **Label:** `"Kimi Code"`
+- **source_id:** `"default"`
+- **Endpoint:** `GET https://api.kimi.com/coding/v1/usages`
+- **Auth:** `Authorization: Bearer $KIMI_API_KEY`
+- **Resposta:** `limits[]`, cada item com `window.duration` +
+  `window.timeUnit` (`TIME_UNIT_MINUTE`/`HOUR`/`DAY`) e `detail` com
+  `limit`/`used`/`remaining` como **strings** numéricas e `resetTime` (RFC
+  3339). Planos pagos podem incluir também `usage` (quota semanal) com
+  `limit`/`remaining`/`resetTime` (números ou strings).
+- **Mapeamento:** `SourceState::Quota`. Cada item de `limits[]` vira uma
+  janela via `from_values` (`used`, ou `limit - remaining` quando `used`
+  falta); a duração é normalizada para minutos e mapeada como no Codex:
+  300 ⇒ `FiveHours` (única janela observada na prática), 10080 ⇒
+  `SevenDays`, demais ⇒ `Minutes(n)`, unidade desconhecida ⇒ omitida. O
+  bloco `usage`, quando presente, vira uma janela `SevenDays` adicional.
+  Itens com `limit` igual a zero ou não parseável são ignorados.
+
+### 6.8 Detecção de Credenciais
 
 ```rust
 fn detect_agents() -> Vec<Box<dyn Agent>> {
@@ -760,6 +785,10 @@ fn detect_agents() -> Vec<Box<dyn Agent>> {
     if let Some(a) = CodexAgent::from_env() {
         agents.push(Box::new(a));
     }
+    // Kimi Code depois do OpenAI, pelo mesmo motivo de estabilidade do cache.
+    if let Some(a) = KimiAgent::from_env() {
+        agents.push(Box::new(a));
+    }
     agents
 }
 ```
@@ -788,6 +817,7 @@ src/
     ├── claude.rs        # ClaudeOAuthAgent + ClaudeApiAgent
     ├── zai.rs           # ZaiAgent
     ├── hyper.rs         # HyperAgent (credits do Hyper/Charm)
+    ├── kimi.rs          # KimiAgent (Kimi Code: /coding/v1/usages)
     ├── gemini.rs        # GeminiAgent
     └── openai.rs        # CodexAgent (quota do plano ChatGPT via app-server)
 ```
@@ -1036,6 +1066,7 @@ strip = true
 | `ANTHROPIC_API_KEY` | Claude    | Fonte Claude (API)       |
 | `ZAI_API_KEY`       | Z.ai      | Fonte Z.ai (ou `pass`)   |
 | `GEMINI_API_KEY`    | Gemini    | Gemini (opcional se agy) |
+| `KIMI_API_KEY`      | Kimi Code | Fonte Kimi Code (ou `pass`) |
 | `CLAUDE_CONFIG_DIR` | Claude    | Diretório alt. p/ creds  |
 
 Opcionais:
@@ -1054,6 +1085,7 @@ Opcionais:
 |-----------|--------------|-------------------------------------------------|
 | Claude    | OAuth        | `~/.claude/.credentials.json`                   |
 | Z.ai      | default      | `pass Z_AI_API_KEY` (unix password store)       |
+| Kimi Code | default      | `pass KIMI_API_KEY` (unix password store)       |
 | Gemini    | default      | `~/.gemini/antigravity-cli/log/` (servidor agy) |
 | OpenAI    | codex        | `codex` no `PATH` (login ChatGPT do próprio CLI) |
 

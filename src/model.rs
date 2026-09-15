@@ -79,6 +79,7 @@ pub enum Provider {
     Gemini,
     Hyper,
     OpenAI,
+    Kimi,
 }
 
 impl Provider {
@@ -89,6 +90,7 @@ impl Provider {
             Provider::Gemini => "Gemini",
             Provider::Hyper => "Hyper",
             Provider::OpenAI => "OpenAI",
+            Provider::Kimi => "Kimi Code",
         }
     }
 }
@@ -329,6 +331,7 @@ mod tests {
         assert_eq!(Provider::Zai.label(), "Z.ai");
         assert_eq!(Provider::Gemini.label(), "Gemini");
         assert_eq!(Provider::OpenAI.label(), "OpenAI");
+        assert_eq!(Provider::Kimi.label(), "Kimi Code");
     }
 
     #[test]

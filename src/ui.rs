@@ -662,9 +662,11 @@ fn draw_welcome(f: &mut Frame, area: Rect, p: &Palette) {
         Line::from("  export ZAI_API_KEY=\"...\"         # Z.ai"),
         Line::from("  export GEMINI_API_KEY=\"...\"      # Gemini"),
         Line::from("  export HYPER_API_KEY=\"...\"       # Hyper (Charm)"),
+        Line::from("  export KIMI_API_KEY=\"...\"        # Kimi Code"),
         Line::from(""),
         Line::from("Fallbacks: ~/.claude/.credentials.json,"),
-        Line::from("  pass Z_AI_API_KEY, HYPER_API_KEY, Antigravity (agy),"),
+        Line::from("  pass Z_AI_API_KEY, HYPER_API_KEY, KIMI_API_KEY,"),
+        Line::from("  Antigravity (agy),"),
         Line::from("  codex (OpenAI Codex CLI, signed in with ChatGPT)"),
         Line::from(""),
         Line::from("[q] Quit"),
@@ -697,6 +699,7 @@ fn placeholder_labels(provider: Provider) -> Vec<String> {
     match provider {
         Provider::Claude | Provider::Zai => vec!["".to_string(), "".to_string()],
         Provider::Hyper | Provider::OpenAI => vec![],
+        Provider::Kimi => vec!["".to_string()],
         Provider::Gemini => vec![
             "Google".into(),
             "Google".into(),
@@ -710,6 +713,7 @@ fn placeholder_kinds(provider: Provider) -> Vec<WindowKind> {
     match provider {
         Provider::Claude | Provider::Zai => vec![WindowKind::FiveHours, WindowKind::SevenDays],
         Provider::Hyper | Provider::OpenAI => vec![],
+        Provider::Kimi => vec![WindowKind::FiveHours],
         Provider::Gemini => vec![
             WindowKind::FiveHours,
             WindowKind::SevenDays,

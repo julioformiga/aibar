@@ -1,8 +1,8 @@
 # aibar
 
 A minimal terminal UI (TUI) that monitors API rate limits for **Claude**,
-**Z.ai**, **Gemini**, and **OpenAI Codex** — 5-hour and 7-day usage windows at
-a glance — plus the **Hyper** (Charm) Hypercredit balance.
+**Z.ai**, **Gemini**, **OpenAI Codex**, and **Kimi Code** — 5-hour and 7-day
+usage windows at a glance — plus the **Hyper** (Charm) Hypercredit balance.
 
 Designed to run in a side pane (e.g. a `tmux` split) and give instant visual
 feedback on how close each account is to its limit.
@@ -51,6 +51,7 @@ Set at least one of the following environment variables, then run `aibar`:
 | `ZAI_API_KEY`         | Z.ai     | Z.ai source (or `pass Z_AI_API_KEY`) |
 | `GEMINI_API_KEY`      | Gemini   | Gemini source (optional if Antigravity/`agy` is installed) |
 | `HYPER_API_KEY`       | Hyper    | Hyper (Charm) Hypercredit balance |
+| `KIMI_API_KEY`        | Kimi Code | Kimi Code source (or `pass KIMI_API_KEY`) |
 | `CLAUDE_CONFIG_DIR`   | Claude   | Alternate directory for OAuth credentials |
 
 Fallbacks without an env var:
@@ -59,8 +60,16 @@ Fallbacks without an env var:
 |----------|---------|--------------------------------------------------|
 | Claude   | OAuth   | `~/.claude/.credentials.json`                     |
 | Z.ai     | default | `pass Z_AI_API_KEY` (Unix password store)         |
+| Kimi Code | default | `pass KIMI_API_KEY` (Unix password store)        |
 | Gemini   | default | `~/.gemini/antigravity-cli/log/` (local `agy` server) |
 | OpenAI   | codex   | `codex` in `PATH`, signed in with a ChatGPT account |
+
+### Kimi Code
+
+The Kimi Code tab reads `GET https://api.kimi.com/coding/v1/usages` and shows
+each rolling rate-limit window the API reports (a 5-hour window in practice)
+plus the weekly quota when the plan includes one, with real `used/limit`
+counts and reset countdowns.
 
 ### OpenAI (Codex)
 

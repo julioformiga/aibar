@@ -56,6 +56,7 @@ impl Theme {
             "Hyper" => Theme::Crush,
             "Gemini" => Theme::Btop,
             "OpenAI" => Theme::Opencode,
+            "Kimi Code" => Theme::Opencode,
             _ => Theme::Default,
         }
     }
@@ -373,6 +374,7 @@ mod tests {
         assert_eq!(Theme::for_provider("Claude"), Theme::Default);
         assert_eq!(Theme::for_provider("Z.ai"), Theme::Opencode);
         assert_eq!(Theme::for_provider("OpenAI"), Theme::Opencode);
+        assert_eq!(Theme::for_provider("Kimi Code"), Theme::Opencode);
         assert_eq!(Theme::for_provider("Hyper"), Theme::Crush);
         assert_eq!(Theme::for_provider("Gemini"), Theme::Btop);
         assert_eq!(Theme::for_provider("Unknown"), Theme::Default);

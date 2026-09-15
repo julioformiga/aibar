@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod gemini;
 pub mod hyper;
+pub mod kimi;
 pub mod openai;
 pub mod zai;
 
@@ -58,6 +59,14 @@ pub fn detect_agents() -> Vec<Box<dyn Agent>> {
             agents.push(Box::new(a));
         }
         None => tracing::info!("openai codex not detected"),
+    }
+    // Appended after OpenAI for the same cache-stability reason.
+    match kimi::KimiAgent::from_env() {
+        Some(a) => {
+            tracing::info!("detected kimi code");
+            agents.push(Box::new(a));
+        }
+        None => tracing::info!("kimi code not detected"),
     }
     agents
 }
