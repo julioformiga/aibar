@@ -233,7 +233,11 @@ mod tests {
         assert_eq!(windows[1].limit, crate::config::NOTIONAL_LIMIT);
         assert_eq!(
             windows[1].reset_at,
-            Some(DateTime::parse_from_rfc3339("2026-10-16T00:00:00Z").unwrap().with_timezone(&Utc))
+            Some(
+                DateTime::parse_from_rfc3339("2026-10-16T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc)
+            )
         );
     }
 
