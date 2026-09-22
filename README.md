@@ -69,7 +69,9 @@ Fallbacks without an env var:
 The Kimi Code tab reads `GET https://api.kimi.com/coding/v1/usages` and shows
 each rolling rate-limit window the API reports (a 5-hour window in practice)
 plus the weekly quota when the plan includes one, with real `used/limit`
-counts and reset countdowns.
+counts and reset countdowns. The monthly quota (`limit_month_total`) is shown
+as a `1M` bar scaled from the `used_ratio` the API reports, with its reset
+countdown.
 
 ### OpenAI (Codex)
 

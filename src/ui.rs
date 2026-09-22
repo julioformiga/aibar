@@ -688,6 +688,7 @@ fn window_kind_str(kind: WindowKind) -> String {
     match kind {
         WindowKind::FiveHours => "5h".into(),
         WindowKind::SevenDays => "7d".into(),
+        WindowKind::Month => "1M".into(),
         WindowKind::Minutes(m) if m > 0 && m % 1440 == 0 => format!("{}d", m / 1440),
         WindowKind::Minutes(m) if m > 0 && m % 60 == 0 => format!("{}h", m / 60),
         WindowKind::Minutes(m) => format!("{}m", m),
@@ -699,7 +700,7 @@ fn placeholder_labels(provider: Provider) -> Vec<String> {
     match provider {
         Provider::Claude | Provider::Zai => vec!["".to_string(), "".to_string()],
         Provider::Hyper | Provider::OpenAI => vec![],
-        Provider::Kimi => vec!["".to_string()],
+        Provider::Kimi => vec!["".to_string(), "".to_string()],
         Provider::Gemini => vec![
             "Google".into(),
             "Google".into(),
@@ -713,7 +714,7 @@ fn placeholder_kinds(provider: Provider) -> Vec<WindowKind> {
     match provider {
         Provider::Claude | Provider::Zai => vec![WindowKind::FiveHours, WindowKind::SevenDays],
         Provider::Hyper | Provider::OpenAI => vec![],
-        Provider::Kimi => vec![WindowKind::FiveHours],
+        Provider::Kimi => vec![WindowKind::FiveHours, WindowKind::Month],
         Provider::Gemini => vec![
             WindowKind::FiveHours,
             WindowKind::SevenDays,
@@ -822,6 +823,7 @@ mod tests {
     fn window_kind_str_matches_spec_format() {
         assert_eq!(window_kind_str(WindowKind::FiveHours), "5h");
         assert_eq!(window_kind_str(WindowKind::SevenDays), "7d");
+        assert_eq!(window_kind_str(WindowKind::Month), "1M");
     }
 
     fn credits_state(balance: Option<f64>, last_error: Option<String>) -> CreditsState {

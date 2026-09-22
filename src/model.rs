@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum WindowKind {
     FiveHours,
     SevenDays,
+    Month,
     Minutes(u32),
     Unknown,
 }

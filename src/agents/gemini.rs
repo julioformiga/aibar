@@ -345,7 +345,7 @@ fn parse_groups(groups: &[Value]) -> Vec<LimitWindow> {
         (Some(LimitScope::ThirdParty), WindowKind::SevenDays) => 3,
         (None, WindowKind::FiveHours) => 0,
         (None, WindowKind::SevenDays) => 1,
-        (_, WindowKind::Minutes(_) | WindowKind::Unknown) => 4,
+        (_, WindowKind::Month | WindowKind::Minutes(_) | WindowKind::Unknown) => 4,
     });
     windows
 }

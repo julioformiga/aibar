@@ -745,13 +745,19 @@ pub trait Agent: Send + Sync {
   `window.timeUnit` (`TIME_UNIT_MINUTE`/`HOUR`/`DAY`) e `detail` com
   `limit`/`used`/`remaining` como **strings** numéricas e `resetTime` (RFC
   3339). Planos pagos podem incluir também `usage` (quota semanal) com
-  `limit`/`remaining`/`resetTime` (números ou strings).
+  `limit`/`remaining`/`resetTime` (números ou strings). O objeto `usages`
+  traz quotas só em fração: `limit_5h`, `limit_month_total` e
+  `limit_month_code`, cada uma com `used_ratio` (0..1) e `reset_time`
+  (snake_case).
 - **Mapeamento:** `SourceState::Quota`. Cada item de `limits[]` vira uma
   janela via `from_values` (`used`, ou `limit - remaining` quando `used`
   falta); a duração é normalizada para minutos e mapeada como no Codex:
   300 ⇒ `FiveHours` (única janela observada na prática), 10080 ⇒
   `SevenDays`, demais ⇒ `Minutes(n)`, unidade desconhecida ⇒ omitida. O
   bloco `usage`, quando presente, vira uma janela `SevenDays` adicional.
+  `usages.limit_month_total` vira uma janela `Month` via `from_fraction`
+  (a API não expõe contagens absolutas do mês); `limit_5h` é ignorado por
+  duplicar `limits[]` e `limit_month_code` não é exibido.
   Itens com `limit` igual a zero ou não parseável são ignorados.
 
 ### 6.8 Detecção de Credenciais

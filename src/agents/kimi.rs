@@ -132,7 +132,9 @@ fn window_from_detail(kind: WindowKind, detail: &Value) -> Option<LimitWindow> {
 
 /// Maps the `/usages` response into bars: one per `limits[]` rolling window
 /// (verified shape: a single 300-minute window), plus the weekly quota in
-/// `usage` (present only on some plans) as a 7d window.
+/// `usage` (present only on some plans) as a 7d window and the monthly quota
+/// in `usages.limit_month_total` (ratio only, no absolute counts) as a 1M
+/// window.
 fn parse_usages(resp: &Value) -> Vec<LimitWindow> {
     let mut windows = Vec::new();
 
@@ -161,6 +163,18 @@ fn parse_usages(resp: &Value) -> Vec<LimitWindow> {
                 parse_reset(&usage["resetTime"]),
             ));
         }
+    }
+
+    // `usages.limit_month_total` reports only a `used_ratio` (0..1) and a
+    // snake_case `reset_time`; scale the ratio onto the notional limit.
+    let month = &resp["usages"]["limit_month_total"];
+    if let Some(ratio) = month["used_ratio"].as_f64() {
+        windows.push(LimitWindow::from_fraction(
+            WindowKind::Month,
+            None,
+            ratio as f32,
+            parse_reset(&month["reset_time"]),
+        ));
     }
 
     windows
@@ -192,6 +206,35 @@ mod tests {
         assert_eq!(windows[0].used, 68);
         assert_eq!(windows[0].limit, 100);
         assert!(windows[0].reset_at.is_some());
+    }
+
+    #[test]
+    fn parse_usages_includes_monthly_total_ratio() {
+        // Shape captured from a live call: `usages` carries ratio-only quotas
+        // (`used_ratio` + snake_case `reset_time`); only `limit_month_total`
+        // becomes a bar — `limit_5h` duplicates `limits[]` and
+        // `limit_month_code` is not shown.
+        let resp = json!({
+            "limits": [{
+                "window": { "duration": 300, "timeUnit": "TIME_UNIT_MINUTE" },
+                "detail": { "limit": "100", "used": "6", "resetTime": "2026-09-22T13:44:53Z" }
+            }],
+            "usages": {
+                "limit_5h": { "used_ratio": 0.06, "reset_time": "2026-09-22T13:44:53Z" },
+                "limit_month_total": { "used_ratio": 0.4244, "reset_time": "2026-10-16T00:00:00Z" },
+                "limit_month_code": { "used_ratio": 0.0, "reset_time": "2026-10-16T00:00:00Z" }
+            }
+        });
+        let windows = parse_usages(&resp);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].kind, WindowKind::FiveHours);
+        assert_eq!(windows[1].kind, WindowKind::Month);
+        assert_eq!(windows[1].used, 424);
+        assert_eq!(windows[1].limit, crate::config::NOTIONAL_LIMIT);
+        assert_eq!(
+            windows[1].reset_at,
+            Some(DateTime::parse_from_rfc3339("2026-10-16T00:00:00Z").unwrap().with_timezone(&Utc))
+        );
     }
 
     #[test]
